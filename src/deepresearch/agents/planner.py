@@ -28,7 +28,7 @@ class PlannerAgent(Agent):
         prompt = load_prompt("planner").format(
             query=ctx.request.query,
             personal=_format_records(ctx.primes.get(MemoryType.personal, [])),
-            procedural=_format_records(ctx.primes.get(MemoryType.procedural, [])),
+            task=_format_records(ctx.primes.get(MemoryType.task, [])),
             tool=_format_records(ctx.primes.get(MemoryType.tool, [])),
         )
         endpoint = ctx.deps.router.select(

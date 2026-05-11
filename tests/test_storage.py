@@ -41,7 +41,7 @@ def test_run_step_memory_roundtrip():
         user_id="u",
         project_id="p",
         kind=MemoryEventKind.prime_read,
-        memory_type=MemoryType.procedural,
+        memory_type=MemoryType.task,
         query="q",
     )
     repos.memory_events.append(event)

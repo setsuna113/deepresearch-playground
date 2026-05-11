@@ -14,7 +14,7 @@ class MemoryQueryRequest(BaseModel):
     user_id: str
     project_id: str
     query: str
-    memory_type: MemoryType = MemoryType.procedural
+    memory_type: MemoryType = MemoryType.task
     top_k: int = 5
 
 

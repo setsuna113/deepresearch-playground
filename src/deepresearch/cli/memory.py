@@ -16,7 +16,7 @@ def cmd_memory_query(
     query: str = typer.Argument(..., help="Query string for memory retrieval."),
     user: str = typer.Option("default", "--user", "-u"),
     project: str = typer.Option("default", "--project", "-p"),
-    type: MemoryType = typer.Option(MemoryType.procedural, "--type"),
+    type: MemoryType = typer.Option(MemoryType.task, "--type"),
     top_k: int = typer.Option(5, "--top-k", "-k"),
 ) -> None:
     """Query memory directly."""

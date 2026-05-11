@@ -46,13 +46,13 @@ memory:
   profiles:
     default:
       personal_top_k: 5
-      procedural_top_k: 5
+      task_top_k: 5
       tool_top_k: 3
       working_top_k: 0
       score_floor: 0.55
     none:
       personal_top_k: 0
-      procedural_top_k: 0
+      task_top_k: 0
       tool_top_k: 0
       working_top_k: 0
       score_floor: 1.0

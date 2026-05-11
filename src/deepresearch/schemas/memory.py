@@ -1,6 +1,6 @@
 """MemoryType + MemoryEvent + MemoryRecord.
 
-The public 4-type taxonomy (personal/procedural/tool/working) is used
+The public 4-type taxonomy (personal/task/tool/working) is used
 throughout the agent layer. `memory/types.py` handles the mapping to ReMe's
 native 3-type taxonomy where needed.
 """
@@ -19,7 +19,7 @@ from deepresearch.schemas.privacy import PrivacyEnvelope
 
 class MemoryType(str, Enum):
     personal = "personal"
-    procedural = "procedural"  # "task" in the user-facing plan
+    task = "task"
     tool = "tool"
     working = "working"
 

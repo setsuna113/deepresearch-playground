@@ -29,7 +29,7 @@ The thesis combines three streams that have not yet been integrated:
 A STORM-style DeepResearch loop with **ReMe** as the primary memory layer:
 
 - Agents: planner, searcher, reader, synthesizer, reflector.
-- Memory: personal / procedural / tool via ReMe (Qdrant backend), plus a
+- Memory: personal / task / tool via ReMe (Qdrant backend), plus a
   working-memory collection that we manage ourselves.
 - Storage: SQLite for runs/traces/metrics.
 - Runtime: FastAPI service + Typer CLI.

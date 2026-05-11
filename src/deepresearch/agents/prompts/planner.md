@@ -8,8 +8,8 @@ snippets. Cover distinct angles — avoid overlap.
 # Prior personal preferences (use to bias the plan; do not echo back)
 {personal}
 
-# Prior procedural lessons (search strategies that worked or failed)
-{procedural}
+# Prior task lessons (search strategies that worked or failed)
+{task}
 
 # Prior tool hints (source-quality lessons)
 {tool}

@@ -46,7 +46,7 @@ class ReflectorAgent(Agent):
         ctx.reflection = update
         return {
             "personal_update": update.personal_update,
-            "procedural_update": update.procedural_update,
+            "task_update": update.task_update,
             "tool_update": update.tool_update,
             "needs_revision": update.needs_revision,
             "model_call_id": str(resp.call_id),

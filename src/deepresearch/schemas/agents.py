@@ -55,7 +55,7 @@ class BroadcastCandidate(BaseModel):
 
 class ReflectionUpdate(BaseModel):
     personal_update: str | None = None
-    procedural_update: str | None = None
+    task_update: str | None = None
     tool_update: str | None = None
     needs_revision: bool = False
     broadcast_candidate: BroadcastCandidate | None = None

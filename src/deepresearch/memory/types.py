@@ -1,17 +1,18 @@
 """4-type ↔ ReMe-3-type mapping.
 
 Our agent layer speaks the 4-type vocabulary:
-    personal | procedural | tool | working
+    personal | task | tool | working
 
-ReMe natively supports 3 of these. We own `working` ourselves in a separate
-Qdrant collection.
+ReMe natively supports the first 3 of these (verified against reme-ai
+0.3.1.8 source: task / tool / personal). We own `working` ourselves in a
+separate Qdrant collection.
 
-| Our type    | Backend           |
-| ----------- | ----------------- |
-| personal    | ReMe `personal`   |
-| procedural  | ReMe `procedural` |
-| tool        | ReMe `tool`       |
-| working     | working_qdrant    |
+| Our type | Backend         |
+| -------- | --------------- |
+| personal | ReMe `personal` |
+| task     | ReMe `task`     |
+| tool     | ReMe `tool`     |
+| working  | working_qdrant  |
 """
 
 from __future__ import annotations
@@ -21,12 +22,12 @@ from deepresearch.schemas.memory import MemoryType
 # Names ReMe expects on the wire. Keep in one place so the adapter can be
 # patched if ReMe's spelling drifts.
 REME_PERSONAL = "personal"
-REME_PROCEDURAL = "procedural"
+REME_TASK = "task"
 REME_TOOL = "tool"
 
 _REME_MAP = {
     MemoryType.personal: REME_PERSONAL,
-    MemoryType.procedural: REME_PROCEDURAL,
+    MemoryType.task: REME_TASK,
     MemoryType.tool: REME_TOOL,
 }
 

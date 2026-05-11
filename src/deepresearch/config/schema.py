@@ -69,7 +69,7 @@ class WorkingMemoryConfig(BaseModel):
 
 class MemoryProfileConfig(BaseModel):
     personal_top_k: int = 5
-    procedural_top_k: int = 5
+    task_top_k: int = 5
     tool_top_k: int = 3
     working_top_k: int = 0
     score_floor: float = 0.55

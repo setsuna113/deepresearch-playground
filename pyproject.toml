@@ -28,6 +28,7 @@ dependencies = [
   "rich>=13.9,<15",
   "pyyaml>=6,<7",
   "reme-ai>=0.3,<1",
+  "flowllm>=0.2,<1",  # reme-ai 0.3.x imports from flowllm but doesn't declare it
 ]
 
 [project.optional-dependencies]

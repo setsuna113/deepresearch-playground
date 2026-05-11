@@ -6,7 +6,7 @@ Flow:
   C. Search + Read per sub-question
   D. Synthesize
   E. Reflect
-  F. Write memory (personal/procedural/tool to ReMe; working to Qdrant)
+  F. Write memory (personal/task/tool to ReMe; working to Qdrant)
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ async def run_research(
         if ctx.reflection:
             for mt, text in (
                 (MemoryType.personal, ctx.reflection.personal_update),
-                (MemoryType.procedural, ctx.reflection.procedural_update),
+                (MemoryType.task, ctx.reflection.task_update),
                 (MemoryType.tool, ctx.reflection.tool_update),
             ):
                 if text:

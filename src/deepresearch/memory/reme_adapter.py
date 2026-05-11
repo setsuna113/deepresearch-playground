@@ -1,17 +1,19 @@
 """ReMeAdapter — async wrapper over ReMe's Python API.
 
-The ReMe package (`reme-ai` on PyPI; import surface as of 2026-Q1: subject
-to drift) is optional in Phase 1: if it isn't installed, every method
-returns an empty result and logs a warning. This lets the skeleton run
-end-to-end while we pin the exact ReMe call signatures.
+The ReMe package (`reme-ai` on PyPI, verified against 0.3.1.8) exposes
+its main class as `reme_ai.ReMeApp` — a subclass of `flowllm.core.application.Application`.
+Both `reme-ai` and `flowllm` are now pinned in pyproject.toml; the
+sibling `reme` package would additionally require `agentscope`, which we
+don't pull in.
 
-Wire-up TODO (do when first integrating against a live ReMe install):
-  - confirm import path: `from reme import ReMe` vs `from reme_ai import ...`
-  - confirm method names for query / write
-  - confirm the kwargs ReMe expects for the qdrant backend
+Wire-up TODO (Phase 1.5): the ReMeApp API is a flow-driven Application —
+calls are made by invoking named "flows" with structured payloads rather
+than direct `.search`/`.add` methods. The pseudocode below is best-effort
+based on the upstream README's vocabulary; verify against a live install
+before relying on retrieve/write semantics.
 
-Everything outside this file speaks `MemoryRecord` / `MemoryType`; only this
-adapter touches ReMe.
+Everything outside this file speaks `MemoryRecord` / `MemoryType`; only
+this adapter touches ReMe.
 """
 
 from __future__ import annotations
@@ -30,7 +32,8 @@ log = structlog.get_logger(__name__)
 
 
 def _try_import_reme() -> Any | None:
-    for mod in ("reme", "reme_ai"):
+    # Prefer `reme_ai` (needs flowllm only) over `reme` (needs agentscope).
+    for mod in ("reme_ai", "reme"):
         try:
             return importlib.import_module(mod)
         except ImportError:
@@ -60,11 +63,22 @@ class ReMeAdapter:
                 "embedding": section.embedding.model_dump(),
                 "working_dir": section.working_dir,
             }
-            ctor = getattr(reme_mod, "ReMe", None) or getattr(reme_mod, "ReMeLight", None)
+            ctor = (
+                getattr(reme_mod, "ReMeApp", None)
+                or getattr(reme_mod, "ReMe", None)
+                or getattr(reme_mod, "ReMeLight", None)
+            )
             if ctor is None:
                 log.warning("reme_no_constructor", module=reme_mod.__name__)
                 return adapter
-            adapter._reme = ctor(**cfg) if callable(ctor) else None
+            # ReMeApp expects llm_api_*, embedding_api_*, config_path — NOT
+            # the cfg dict above. Phase 1.5 will wire this properly.
+            log.warning(
+                "reme_init_skipped_phase1",
+                hint="ReMeApp wire-up pending; using working memory only",
+            )
+            _ = ctor, cfg
+            return adapter
         except Exception as e:
             log.warning("reme_init_failed", error=repr(e))
         return adapter

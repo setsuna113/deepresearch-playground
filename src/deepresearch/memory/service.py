@@ -1,7 +1,7 @@
 """MemoryService — the only memory surface the rest of the app sees.
 
 Routes by memory type:
-- personal / procedural / tool  -> ReMeAdapter
+- personal / task / tool  -> ReMeAdapter
 - working                       -> WorkingMemory (our Qdrant)
 
 Records a MemoryEvent on every read/write via the TraceRecorder.
@@ -136,11 +136,11 @@ class MemoryService:
     ) -> dict[MemoryType, list[MemoryRecord]]:
         """One-shot read used at the start of a research run.
 
-        Reads personal / procedural / tool (and optionally working) and
+        Reads personal / task / tool (and optionally working) and
         records each as a `prime_read` event.
         """
         result: dict[MemoryType, list[MemoryRecord]] = {}
-        for mt in (MemoryType.personal, MemoryType.procedural, MemoryType.tool, MemoryType.working):
+        for mt in (MemoryType.personal, MemoryType.task, MemoryType.tool, MemoryType.working):
             k = profile.top_k_for(mt)
             result[mt] = await self.query(
                 run_id=run_id,

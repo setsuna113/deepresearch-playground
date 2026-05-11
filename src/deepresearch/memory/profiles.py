@@ -12,7 +12,7 @@ from deepresearch.schemas.memory import MemoryType
 class MemoryProfile:
     name: str
     personal_top_k: int
-    procedural_top_k: int
+    task_top_k: int
     tool_top_k: int
     working_top_k: int
     score_floor: float
@@ -22,7 +22,7 @@ class MemoryProfile:
         return cls(
             name=name,
             personal_top_k=cfg.personal_top_k,
-            procedural_top_k=cfg.procedural_top_k,
+            task_top_k=cfg.task_top_k,
             tool_top_k=cfg.tool_top_k,
             working_top_k=cfg.working_top_k,
             score_floor=cfg.score_floor,
@@ -31,7 +31,7 @@ class MemoryProfile:
     def top_k_for(self, t: MemoryType) -> int:
         return {
             MemoryType.personal: self.personal_top_k,
-            MemoryType.procedural: self.procedural_top_k,
+            MemoryType.task: self.task_top_k,
             MemoryType.tool: self.tool_top_k,
             MemoryType.working: self.working_top_k,
         }[t]
