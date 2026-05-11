@@ -49,6 +49,10 @@ memory:
       provider: local
       model_id: bge-m3
   working:
+    # Embedded mode by default — qdrant runs in-process from this path so
+    # Phase 1 needs no docker. Set local_path: null to use a Qdrant server
+    # (recommended once Qdrant is running and we share state with ReMe).
+    local_path: ./data/qdrant_working
     qdrant_url: http://localhost:6333
     collection_template: "dr_working_{user}_{project}"
     embedding_model: bge-m3

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -45,7 +46,13 @@ class WorkingMemory:
 
     @classmethod
     async def create(cls, cfg: WorkingMemoryConfig) -> "WorkingMemory":
-        client = AsyncQdrantClient(url=cfg.qdrant_url)
+        if cfg.local_path:
+            Path(cfg.local_path).mkdir(parents=True, exist_ok=True)
+            client = AsyncQdrantClient(path=cfg.local_path)
+            log.info("working_memory_local_mode", path=cfg.local_path)
+        else:
+            client = AsyncQdrantClient(url=cfg.qdrant_url)
+            log.info("working_memory_server_mode", url=cfg.qdrant_url)
         return cls(cfg=cfg, client=client)
 
     def _collection(self, user_id: str, project_id: str) -> str:
@@ -110,14 +117,15 @@ class WorkingMemory:
         try:
             await self._ensure_collection(col)
             vec = _hash_embedding(query)
-            results = await self.client.search(
-                collection_name=col, query_vector=vec, limit=top_k
+            resp = await self.client.query_points(
+                collection_name=col, query=vec, limit=top_k
             )
+            points = resp.points
         except Exception as e:
             log.warning("working_query_failed", error=repr(e))
             return []
         out: list[MemoryRecord] = []
-        for r in results:
+        for r in points:
             payload = r.payload or {}
             out.append(
                 MemoryRecord(

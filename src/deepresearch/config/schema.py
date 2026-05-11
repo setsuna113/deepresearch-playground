@@ -58,6 +58,10 @@ class ReMeSection(BaseModel):
 
 
 class WorkingMemoryConfig(BaseModel):
+    # If `local_path` is set, qdrant-client runs in embedded mode against that
+    # on-disk directory and `qdrant_url` is ignored. This lets Phase 1 run
+    # without docker. Set `local_path: null` to force server mode.
+    local_path: str | None = "./data/qdrant_working"
     qdrant_url: str = "http://localhost:6333"
     collection_template: str = "dr_working_{user}_{project}"
     embedding_model: str = "bge-m3"
