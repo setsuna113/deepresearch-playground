@@ -1,0 +1,16 @@
+items:
+  - id: gq1
+    query: "What are the trade-offs of AWQ vs GPTQ quantization for 70B inference on 4x RTX 4090?"
+    notes: "Tests technical synthesis from multiple sources."
+  - id: gq2
+    query: "How does prefill/decode disaggregation (DistServe, Mooncake) reduce tail latency?"
+    notes: "Tests reasoning across systems-research papers."
+  - id: gq3
+    query: "What hierarchical memory architectures do MemOS, Letta/MemGPT, and Mem0 propose?"
+    notes: "Tests comparative summarization."
+  - id: gq4
+    query: "What does contextual integrity require for an agent that shares user data with a cloud model?"
+    notes: "Tests grounding in a normative framework."
+  - id: gq5
+    query: "What benchmarks exist for deep-research agents (BrowseComp, GAIA, LoCoMo)?"
+    notes: "Tests retrieval breadth."

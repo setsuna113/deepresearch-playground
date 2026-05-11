@@ -1,0 +1,101 @@
+app:
+  data_dir: ./data
+  sqlite_path: ./data/deepresearch.sqlite
+  log_level: INFO
+  log_json: true
+
+models:
+  endpoints:
+    local:
+      base_url: http://localhost:8001/v1
+      api_key: ${LOCAL_API_KEY:-EMPTY}
+      model_id: qwen2.5-14b-instruct
+      role_hint: minimizer
+    cloud:
+      base_url: http://sjtu:8000/v1
+      api_key: ${CLOUD_API_KEY:-EMPTY}
+      model_id: qwen2.5-72b-instruct-awq
+      role_hint: heavy
+    judge:
+      base_url: https://api.openai.com/v1
+      api_key: ${OPENAI_API_KEY:-}
+      model_id: gpt-4o-mini
+      role_hint: judge
+  profiles:
+    phase1_default:
+      planner: local
+      searcher: local
+      reader: local
+      synthesizer: local
+      reflector: local
+    co_schedule_v0:
+      planner: local
+      searcher: local
+      reader: cloud
+      synthesizer: cloud
+      reflector: local
+
+memory:
+  reme:
+    enabled: true
+    working_dir: ./data/reme
+    vector_store:
+      backend: qdrant
+      url: http://localhost:6333
+      collection_prefix: dr_reme_
+    llm:
+      endpoint: local
+    embedding:
+      provider: local
+      model_id: bge-m3
+  working:
+    qdrant_url: http://localhost:6333
+    collection_template: "dr_working_{user}_{project}"
+    embedding_model: bge-m3
+  profiles:
+    default:
+      personal_top_k: 5
+      procedural_top_k: 5
+      tool_top_k: 3
+      working_top_k: 0
+      score_floor: 0.55
+    aggressive:
+      personal_top_k: 10
+      procedural_top_k: 10
+      tool_top_k: 5
+      working_top_k: 5
+      score_floor: 0.45
+    none:
+      personal_top_k: 0
+      procedural_top_k: 0
+      tool_top_k: 0
+      working_top_k: 0
+      score_floor: 1.0
+
+search:
+  default_provider: tavily
+  providers:
+    tavily:
+      api_key: ${TAVILY_API_KEY:-}
+      max_results: 8
+    serpapi:
+      api_key: ${SERPAPI_API_KEY:-}
+      max_results: 8
+  fetch:
+    user_agent: "deepresearch-playground/0.1 (research)"
+    timeout_s: 20
+    max_bytes: 2500000
+    respect_robots: true
+
+api:
+  host: 0.0.0.0
+  port: 8765
+
+privacy:
+  default_envelope:
+    level: public
+    source: unknown
+
+eval:
+  golden_suite_path: ./scripts/golden_queries.yaml
+  judge_endpoint: judge
