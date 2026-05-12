@@ -1,0 +1,11 @@
+{
+  "dockerfile_lines": [],
+  "graphs": {
+    "Deep Researcher (Phase 1.5)": "./src/deepresearch/agents/langgraph/studio.py:studio_graph"
+  },
+  "python_version": "3.12",
+  "env": "./.env",
+  "dependencies": [
+    "."
+  ]
+}
