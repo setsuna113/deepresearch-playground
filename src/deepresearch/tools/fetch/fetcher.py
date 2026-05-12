@@ -29,23 +29,22 @@ class PageFetcher:
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout_s, follow_redirects=True, headers=headers
-            ) as client:
-                async with client.stream("GET", url) as resp:
-                    if resp.status_code >= 400:
-                        return FetchResult(url=url, status=resp.status_code, html=None,
-                                           error=f"HTTP {resp.status_code}")
-                    ctype = resp.headers.get("content-type", "")
-                    if "html" not in ctype and "text" not in ctype:
-                        return FetchResult(url=url, status=resp.status_code, html=None,
-                                           error=f"unsupported content-type: {ctype}")
-                    buf = b""
-                    async for chunk in resp.aiter_bytes():
-                        buf += chunk
-                        if len(buf) > self.max_bytes:
-                            log.info("fetch_truncated", url=url, bytes=len(buf))
-                            break
-                    return FetchResult(
-                        url=url, status=resp.status_code, html=buf.decode("utf-8", errors="replace")
-                    )
+            ) as client, client.stream("GET", url) as resp:
+                if resp.status_code >= 400:
+                    return FetchResult(url=url, status=resp.status_code, html=None,
+                                       error=f"HTTP {resp.status_code}")
+                ctype = resp.headers.get("content-type", "")
+                if "html" not in ctype and "text" not in ctype:
+                    return FetchResult(url=url, status=resp.status_code, html=None,
+                                       error=f"unsupported content-type: {ctype}")
+                buf = b""
+                async for chunk in resp.aiter_bytes():
+                    buf += chunk
+                    if len(buf) > self.max_bytes:
+                        log.info("fetch_truncated", url=url, bytes=len(buf))
+                        break
+                return FetchResult(
+                    url=url, status=resp.status_code, html=buf.decode("utf-8", errors="replace")
+                )
         except Exception as e:
             return FetchResult(url=url, status=0, html=None, error=repr(e))

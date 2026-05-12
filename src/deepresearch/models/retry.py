@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import httpx
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
-
-import httpx
 
 
 def make_async_retry() -> AsyncRetrying:

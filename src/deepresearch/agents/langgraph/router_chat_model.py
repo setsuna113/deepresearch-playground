@@ -27,10 +27,11 @@ layer sets these to our role names: "supervisor", "compressor",
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Iterator, Optional, Sequence, Union
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -49,7 +50,6 @@ from langchain_core.messages import (
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import ConfigDict, Field
 
@@ -173,11 +173,11 @@ class RouterChatModel(BaseChatModel):
     envelope: Any = None
     run_id: Any = None
     role: str = "supervisor"
-    max_tokens_override: Optional[int] = None
+    max_tokens_override: int | None = None
     # `bound_tools` carries OpenAI-formatted tool schemas. Captured from
     # `bind_tools(...)` calls on the configurable proxy.
     bound_tools: list[dict[str, Any]] = Field(default_factory=list)
-    bound_tool_choice: Optional[str] = None
+    bound_tool_choice: str | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -188,8 +188,8 @@ class RouterChatModel(BaseChatModel):
     def _generate(
         self,
         messages: list[BaseMessage],
-        stop: Optional[list[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         raise NotImplementedError(
@@ -199,8 +199,8 @@ class RouterChatModel(BaseChatModel):
     async def _agenerate(
         self,
         messages: list[BaseMessage],
-        stop: Optional[list[str]] = None,
-        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         ep = self.deps.router.select(
@@ -265,9 +265,9 @@ class RouterChatModel(BaseChatModel):
         self,
         tools: Sequence[Any],
         *,
-        tool_choice: Optional[str] = None,
+        tool_choice: str | None = None,
         **kwargs: Any,
-    ) -> "RouterChatModel":
+    ) -> RouterChatModel:
         formatted = [convert_to_openai_tool(t) for t in tools]
         return self.model_copy(
             update={"bound_tools": formatted, "bound_tool_choice": tool_choice}
@@ -292,9 +292,9 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
         deps: RunDependencies,
         profile_name: str,
         envelope: PrivacyEnvelope,
-        run_id: Optional[UUID],
-        default_config: Optional[dict[str, Any]] = None,
-        queued_ops: Optional[list[tuple[str, tuple, dict]]] = None,
+        run_id: UUID | None,
+        default_config: dict[str, Any] | None = None,
+        queued_ops: list[tuple[str, tuple, dict]] | None = None,
     ) -> None:
         self._deps = deps
         self._profile_name = profile_name
@@ -306,9 +306,9 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
     def _clone(
         self,
         *,
-        default_config: Optional[dict[str, Any]] = None,
-        queued_ops: Optional[list[tuple[str, tuple, dict]]] = None,
-    ) -> "RouterConfigurableModel":
+        default_config: dict[str, Any] | None = None,
+        queued_ops: list[tuple[str, tuple, dict]] | None = None,
+    ) -> RouterConfigurableModel:
         return RouterConfigurableModel(
             deps=self._deps,
             profile_name=self._profile_name,
@@ -326,7 +326,7 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
     def __getattr__(self, name: str) -> Any:
         if name in _FORWARDED_DECLARATIVE:
             def queue(*args: Any, **kwargs: Any) -> RouterConfigurableModel:
-                new_ops = list(self._queued_ops) + [(name, args, kwargs)]
+                new_ops = [*self._queued_ops, (name, args, kwargs)]
                 return self._clone(queued_ops=new_ops)
 
             return queue
@@ -335,9 +335,9 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
     # -- Config absorption (mirrors _ConfigurableModel.with_config) --
     def with_config(
         self,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
-    ) -> "RouterConfigurableModel":
+    ) -> RouterConfigurableModel:
         merged: dict[str, Any] = dict(config or {})
         merged.update(kwargs)
         # Upstream's per-node `model_config` is passed at the top level
@@ -363,7 +363,7 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
         return self._clone(default_config=new_default, queued_ops=new_ops)
 
     # -- Materialization --
-    def _materialize(self, runtime_config: Optional[RunnableConfig] = None) -> Runnable:
+    def _materialize(self, runtime_config: RunnableConfig | None = None) -> Runnable:
         # Merge our captured default_config with anything LangChain
         # promoted into `runtime_config["configurable"]` (e.g., via a
         # `RunnableBinding.with_config` upstream of us).
@@ -396,7 +396,7 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
     async def ainvoke(
         self,
         input: LanguageModelInput,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AIMessage:
         materialized = self._materialize(config)
@@ -405,7 +405,7 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
     def invoke(
         self,
         input: LanguageModelInput,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AIMessage:
         materialized = self._materialize(config)
@@ -414,7 +414,7 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
     async def astream(  # pragma: no cover - upstream uses ainvoke, not astream
         self,
         input: LanguageModelInput,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         materialized = self._materialize(config)
@@ -424,7 +424,7 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
     def stream(  # pragma: no cover - sync streaming not used
         self,
         input: LanguageModelInput,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[Any]:
         materialized = self._materialize(config)
@@ -435,7 +435,7 @@ def build_router_configurable_model(
     *,
     deps: RunDependencies,
     request: RunRequest,
-    run_id: Optional[UUID],
+    run_id: UUID | None,
 ) -> RouterConfigurableModel:
     """Construct a configurable proxy for a single research run.
 
@@ -477,7 +477,7 @@ class _ActiveRun:
     run_id: Any
 
 
-_active_run_var: ContextVar[Optional[_ActiveRun]] = ContextVar(
+_active_run_var: ContextVar[_ActiveRun | None] = ContextVar(
     "deepresearch_active_run", default=None
 )
 
@@ -532,8 +532,8 @@ configurable_model_proxy = _LazyConfigurableModelProxy()
 __all__ = [
     "RouterChatModel",
     "RouterConfigurableModel",
-    "build_router_configurable_model",
     "active_run_context",
-    "get_active_router_model",
+    "build_router_configurable_model",
     "configurable_model_proxy",
+    "get_active_router_model",
 ]

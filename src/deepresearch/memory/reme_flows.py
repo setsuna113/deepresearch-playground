@@ -26,7 +26,6 @@ from __future__ import annotations
 
 from deepresearch.schemas.memory import MemoryType
 
-
 # ---- Retrieval (read) flows -------------------------------------------------
 
 RETRIEVE_FLOW_FOR: dict[MemoryType, str] = {

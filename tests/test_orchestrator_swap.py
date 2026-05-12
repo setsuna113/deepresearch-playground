@@ -20,10 +20,8 @@ keep the test hermetic.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -50,7 +48,6 @@ from deepresearch.config.schema import (
 from deepresearch.models.client import ModelClientResponse
 from deepresearch.schemas.runs import RunRequest
 
-
 # ---------- Fake LLM ------------------------------------------------------
 
 
@@ -69,7 +66,6 @@ class _StatefulFakeClient:
         self.calls.append(kwargs)
         role = kwargs.get("role")
         tools = kwargs.get("tools")
-        tool_call_id = None
         tool_calls = None
 
         # write_research_brief: structured_output ResearchQuestion =>

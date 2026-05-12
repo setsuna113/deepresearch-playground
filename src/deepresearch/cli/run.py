@@ -6,8 +6,8 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from deepresearch.api.deps import build_dependencies
 from deepresearch.agents.orchestrator import run_research
+from deepresearch.api.deps import build_dependencies
 from deepresearch.config import get_config
 from deepresearch.observability.logging import configure_logging
 from deepresearch.schemas.runs import Depth, RunRequest

@@ -28,13 +28,13 @@ import json
 import logging
 import sys
 import tempfile
-from pathlib import Path
-from types import SimpleNamespace
-from uuid import uuid4
 
 # Quiet the noisy deprecation warnings + transformers banner before any
 # imports that trigger them.
 import warnings
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
@@ -63,7 +63,6 @@ from deepresearch.config.schema import (  # noqa: E402
 )
 from deepresearch.models.client import ModelClientResponse  # noqa: E402
 from deepresearch.schemas.runs import RunRequest  # noqa: E402
-
 
 # ----------------------------------------------------------------------
 # Fake LLM that produces tokens.
@@ -119,13 +118,13 @@ class FakeRoutingClient:
             ]
         elif role == "final_report":
             content = (
-                "# AWQ vs. GPTQ on 4× RTX 4090 — Trade-offs\n\n"
+                "# AWQ vs. GPTQ on 4x RTX 4090 — Trade-offs\n\n"
                 "**Quality.** Both quantizations preserve ≥98% of FP16 quality on "
                 "common benchmarks for 70B-class models; AWQ tends to win on "
                 "instruction-following while GPTQ wins on math-heavy prompts. [1]\n\n"
-                "**Latency & memory.** AWQ kernels in vLLM achieve roughly 1.2× the "
+                "**Latency & memory.** AWQ kernels in vLLM achieve roughly 1.2x the "
                 "tokens/sec of GPTQ at the same batch size on Ada-class GPUs, with "
-                "comparable VRAM (~38 GB for a 70B model on 4× 4090). [2]\n\n"
+                "comparable VRAM (~38 GB for a 70B model on 4x 4090). [2]\n\n"
                 "**Ecosystem.** AWQ is first-class in vLLM and SGLang; GPTQ has "
                 "broader text-generation-webui support but lags on production "
                 "serving stacks. [3]\n\n"

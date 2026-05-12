@@ -45,7 +45,7 @@ class WorkingMemory:
     client: AsyncQdrantClient
 
     @classmethod
-    async def create(cls, cfg: WorkingMemoryConfig) -> "WorkingMemory":
+    async def create(cls, cfg: WorkingMemoryConfig) -> WorkingMemory:
         if cfg.local_path:
             Path(cfg.local_path).mkdir(parents=True, exist_ok=True)
             client = AsyncQdrantClient(path=cfg.local_path)

@@ -40,7 +40,7 @@ class MemoryService:
         cls,
         section: MemorySection,
         recorder: _RecorderProtocol | None = None,
-    ) -> "MemoryService":
+    ) -> MemoryService:
         reme = await ReMeAdapter.create(section.reme)
         working = await WorkingMemory.create(section.working)
         return cls(reme=reme, working=working, recorder=recorder)

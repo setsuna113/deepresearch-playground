@@ -7,9 +7,9 @@ API never touch SQLAlchemy directly.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence
 from uuid import UUID
 
 from sqlmodel import select

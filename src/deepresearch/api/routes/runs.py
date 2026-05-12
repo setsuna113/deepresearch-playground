@@ -21,8 +21,15 @@ async def create_run(req: RunRequest, request: Request) -> RunResponse:
     # then run the orchestrator in the background against the same row.
     run = ResearchRun(request=req, status=RunStatus.pending)
     deps.repos.runs.create(run)
-    asyncio.create_task(run_research(req, deps, existing_run=run))
+    # Hold a reference so asyncio doesn't garbage-collect the task
+    # mid-run; the FastAPI app's state outlives the request.
+    task = asyncio.create_task(run_research(req, deps, existing_run=run))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
     return RunResponse(run_id=run.id, status=RunStatus.pending)
+
+
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 @router.get("/{run_id}", response_model=RunResponse)

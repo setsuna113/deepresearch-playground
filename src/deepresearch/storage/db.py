@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterator
 
 from sqlalchemy import Engine
 from sqlmodel import Session, SQLModel, create_engine

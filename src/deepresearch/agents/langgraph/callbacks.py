@@ -19,8 +19,9 @@ single-threaded mutations of dict/list state under the event loop.
 
 from __future__ import annotations
 
-import time
+import contextlib
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -104,7 +105,7 @@ class TraceCallbackHandler(AsyncCallbackHandler):
         *,
         recorder: TraceRecorder | None,
         run_id: UUID,
-        seq_alloc: "SeqAllocator",
+        seq_alloc: SeqAllocator,
     ) -> None:
         super().__init__()
         self._recorder = recorder
@@ -229,10 +230,8 @@ class TraceCallbackHandler(AsyncCallbackHandler):
                 info = getattr(gen, "generation_info", None) or {}
                 cid = info.get("call_id")
                 if cid:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         frame.model_call_ids.append(UUID(cid))
-                    except (ValueError, TypeError):
-                        pass
 
     # ---------- tool events ----------
     async def on_tool_start(
@@ -350,4 +349,4 @@ class SeqAllocator:
         return self._n
 
 
-__all__ = ["TraceCallbackHandler", "SeqAllocator", "NODE_TO_ROLE"]
+__all__ = ["NODE_TO_ROLE", "SeqAllocator", "TraceCallbackHandler"]

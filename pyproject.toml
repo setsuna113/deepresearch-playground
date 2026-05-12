@@ -73,10 +73,20 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = [
+  # Vendored upstream from langchain-ai/open_deep_research — see
+  # src/deepresearch/agents/langgraph/upstream/UPSTREAM_NOTE.md.
+  "src/deepresearch/agents/langgraph/upstream",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
-ignore = ["E501"]  # let formatter handle line length
+ignore = [
+  "E501",     # let formatter handle line length
+  "UP042",    # str+Enum is fine; StrEnum migration is its own pass
+  "B008",     # Field(default_factory=...) is canonical Pydantic v2
+  "SIM117",   # nested with-statements are easier to read here
+]
 
 [tool.mypy]
 python_version = "3.12"

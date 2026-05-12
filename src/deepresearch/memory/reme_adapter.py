@@ -35,7 +35,6 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import UUID
 
 import structlog
 
@@ -153,7 +152,7 @@ class ReMeAdapter:
     _stats: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    async def create(cls, section: ReMeSection) -> "ReMeAdapter":
+    async def create(cls, section: ReMeSection) -> ReMeAdapter:
         adapter = cls(section=section)
         if not section.enabled:
             log.info("reme_disabled_by_config")
