@@ -33,6 +33,7 @@ Open questions to revisit:
 from __future__ import annotations
 
 import importlib
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -119,35 +120,74 @@ def _stringify(v: Any) -> str:
 
 
 def _build_reme_args(section: ReMeSection) -> tuple[list[str], dict[str, str | None]]:
-    """Translate our ReMe config into CLI-style override args.
+    """Translate our ReMe config into CLI-style override args + constructor kwargs.
 
     Mirrors the `reme backend=http llm.default.model_name=... ...`
     invocation style documented in ReMeApp.__init__.
 
-    Two known sharp edges with flowllm's CLI parser:
+    Three known sharp edges:
 
-    1. `vector_store.default.params={...}` is parsed as a literal string,
-       not a dict, so the qdrant URL override goes through as text and
-       ReMe's pydantic ServiceConfig rejects it. We therefore do NOT
-       override `vector_store` at all here; ReMe uses its default
-       in-memory vector store. Our working memory keeps its own Qdrant
-       collection separately.
+    1. `vector_store.default.params={...}` is parsed as a literal string
+       by flowllm's CLI parser, not a dict, so the qdrant URL override
+       goes through as text and ReMe's pydantic ServiceConfig rejects
+       it. We do NOT override `vector_store` here; ReMe uses its default
+       in-memory store. Our working memory keeps its own Qdrant.
 
-    2. `llm.default.model_name=local` is meaningless to flowllm. We use
-       a placeholder real-looking model name so init passes pydantic
-       validation; actual LLM calls inside ReMe summary flows hit the
-       endpoint at `llm_api_base` regardless of this string. If you
-       want ReMe writes to work properly, set FLOW_LLM_API_BASE in env.
+    2. `llm.default.model_name` is validated against a real model name.
+       We read it from env (`REME_LLM_MODEL`) or fall back to
+       `deepseek-chat` since DeepSeek is the most common OpenAI-compatible
+       endpoint configured in this project. If a Qwen/OpenAI/etc.
+       endpoint is being used, set REME_LLM_MODEL accordingly.
+
+    3. ReMe's LLM auth: by default ReMe instantiates a plain OpenAI
+       client and reads `OPENAI_API_KEY`. To use any other OpenAI-compat
+       endpoint (DeepSeek, Together, hosted vLLM, etc.) we pass
+       `llm_api_key` + `llm_api_base` as constructor kwargs. These
+       come from `REME_LLM_API_KEY` / `REME_LLM_API_BASE` env vars,
+       falling back to DEEPSEEK_API_KEY + the DeepSeek endpoint when
+       a DeepSeek key is present.
+
+    Returns (positional_args, constructor_kwargs).
     """
+    # Resolve LLM credentials with the precedence:
+    #   REME_LLM_API_{KEY,BASE} > DEEPSEEK_API_KEY+deepseek.com > OPENAI_API_KEY+default
+    llm_api_key = os.environ.get("REME_LLM_API_KEY")
+    llm_api_base = os.environ.get("REME_LLM_API_BASE")
+    llm_model = os.environ.get("REME_LLM_MODEL")
+
+    if not llm_api_key:
+        deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+        if deepseek_key:
+            llm_api_key = deepseek_key
+            llm_api_base = llm_api_base or "https://api.deepseek.com/v1"
+            llm_model = llm_model or "deepseek-chat"
+
+    # If still nothing, fall back to OPENAI defaults — ReMe will look
+    # up OPENAI_API_KEY itself if neither kwarg is supplied.
+    if not llm_model:
+        llm_model = "gpt-4o-mini"
+
+    embed_api_key = os.environ.get("REME_EMBEDDING_API_KEY") or llm_api_key
+    embed_api_base = os.environ.get("REME_EMBEDDING_API_BASE") or llm_api_base
+
     args = [
         "backend=python",  # we drive flows directly; no HTTP/MCP service
         "llm.default.backend=openai_compatible",
-        "llm.default.model_name=gpt-4o-mini",  # placeholder; see (2) above
+        f"llm.default.model_name={llm_model}",
         "embedding_model.default.backend=openai_compatible",
         f"embedding_model.default.model_name={section.embedding.model_id}",
         # vector_store: intentionally NOT overridden (see (1) above).
     ]
-    return args, {}
+    kwargs: dict[str, str | None] = {}
+    if llm_api_key:
+        kwargs["llm_api_key"] = llm_api_key
+    if llm_api_base:
+        kwargs["llm_api_base"] = llm_api_base
+    if embed_api_key:
+        kwargs["embedding_api_key"] = embed_api_key
+    if embed_api_base:
+        kwargs["embedding_api_base"] = embed_api_base
+    return args, kwargs
 
 
 @dataclass
