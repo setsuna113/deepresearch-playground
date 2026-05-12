@@ -35,7 +35,6 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 import structlog
 from langchain_core.messages import HumanMessage
@@ -43,19 +42,13 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from deepresearch.agents.context import RunDependencies
-from deepresearch.agents.langgraph.callbacks import (
-    SeqAllocator,
-    TraceCallbackHandler,
-)
 from deepresearch.agents.langgraph.reflection_node import reflector_node
-from deepresearch.agents.langgraph.role_map import CONFIG_FIELD_TO_ROLE
 from deepresearch.agents.langgraph.router_chat_model import (
     _ActiveRun,
-    _active_run_var,
+    set_studio_active_run,
 )
 from deepresearch.agents.langgraph.upstream.configuration import (
     Configuration,
-    SearchAPI,
 )
 from deepresearch.agents.langgraph.upstream.deep_researcher import (
     clarify_with_user,
@@ -133,11 +126,11 @@ async def studio_bootstrap(state: AgentState, config: RunnableConfig) -> dict[st
     except Exception as e:  # pragma: no cover - studio resilience
         log.warning("studio_run_persist_failed", error=repr(e))
 
-    # Set the contextvar WITHOUT resetting; it propagates to every
-    # downstream node in this asyncio task (including supervisor /
-    # researcher subgraphs spawned via asyncio.gather, which inherit
-    # the context at gather-time).
-    _active_run_var.set(_ActiveRun(deps=deps, request=req, run_id=run.id))
+    # LangGraph's Pregel runs each node in a fresh asyncio Task, so
+    # contextvars set here would NOT propagate to clarify_with_user
+    # next. Use the module-level Studio slot instead — single-tenant
+    # but adequate for the `langgraph dev` use case.
+    set_studio_active_run(_ActiveRun(deps=deps, request=req, run_id=run.id))
 
     return {}
 
@@ -165,4 +158,4 @@ def _build_studio_graph() -> Any:
 studio_graph = _build_studio_graph()
 
 
-__all__ = ["studio_graph", "studio_bootstrap"]
+__all__ = ["studio_bootstrap", "studio_graph"]

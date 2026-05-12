@@ -482,18 +482,51 @@ _active_run_var: ContextVar[_ActiveRun | None] = ContextVar(
 )
 
 
+# Module-level fallback for the Studio / `langgraph dev` path.
+#
+# LangGraph's Pregel scheduler runs each node in its own asyncio Task
+# whose context snapshot is taken at task-creation time (before any
+# previous node had a chance to `.set()` the contextvar). So a
+# contextvar set inside a bootstrap node does NOT propagate to the
+# next node. We fall back to this process-level slot for Studio.
+#
+# Caveat: this is single-tenant — concurrent Studio runs in the same
+# process would race. That's acceptable for development; production
+# deployments should use the contextvar path via `active_run_context`
+# (which wraps the entire `graph.ainvoke(...)` call from outside).
+_studio_active_run: _ActiveRun | None = None
+
+
+def set_studio_active_run(active: _ActiveRun) -> None:
+    """Bind the active run at process level (Studio fallback path)."""
+    global _studio_active_run
+    _studio_active_run = active
+
+
+def clear_studio_active_run() -> None:
+    """Reset the Studio active-run slot. Optional; useful for tests."""
+    global _studio_active_run
+    _studio_active_run = None
+
+
 def get_active_router_model() -> RouterConfigurableModel:
     """Return a fresh `RouterConfigurableModel` for the active run.
 
-    Raises if no `active_run_context(...)` is in scope — meaning the
-    vendored graph was invoked without runtime.py setting up the context,
-    which is a developer error.
+    Resolution order:
+    1. Contextvar bound by `active_run_context(...)` — the normal path
+       when `runtime.run_research` drives the graph.
+    2. Module-level `_studio_active_run` set by `studio_bootstrap` —
+       the LangGraph Studio path, where contextvars can't propagate
+       across Pregel node boundaries.
+
+    Raises if neither is set.
     """
-    active = _active_run_var.get()
+    active = _active_run_var.get() or _studio_active_run
     if active is None:
         raise RuntimeError(
             "RouterChatModel: no active run context. Wrap the graph "
-            "invocation with `active_run_context(deps, request, run_id)`."
+            "invocation with `active_run_context(deps, request, run_id)` "
+            "or call `set_studio_active_run(...)` from a bootstrap node."
         )
     return build_router_configurable_model(
         deps=active.deps, request=active.request, run_id=active.run_id
@@ -534,6 +567,8 @@ __all__ = [
     "RouterConfigurableModel",
     "active_run_context",
     "build_router_configurable_model",
+    "clear_studio_active_run",
     "configurable_model_proxy",
     "get_active_router_model",
+    "set_studio_active_run",
 ]
