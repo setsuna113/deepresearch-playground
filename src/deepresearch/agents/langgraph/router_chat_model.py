@@ -269,6 +269,14 @@ class RouterChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> RouterChatModel:
         formatted = [convert_to_openai_tool(t) for t in tools]
+        # LangChain's `BaseChatModel.with_structured_output` hardcodes
+        # `tool_choice="any"` (the old OpenAI value). OpenAI renamed it
+        # to "required" in May 2024 and vLLM follows the new spec
+        # strictly — "any" raises 400. Translate at our boundary so
+        # every downstream OpenAI-compatible endpoint sees the
+        # spec-compliant value.
+        if tool_choice == "any":
+            tool_choice = "required"
         return self.model_copy(
             update={"bound_tools": formatted, "bound_tool_choice": tool_choice}
         )
