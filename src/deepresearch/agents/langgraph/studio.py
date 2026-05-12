@@ -33,10 +33,35 @@ and submit a query.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+
+# Override upstream `Configuration` defaults at import time. The
+# upstream `from_runnable_config` reads `os.environ.get(FIELD.upper(),
+# configurable.get(field))` so env vars win over the upstream defaults
+# of "openai:gpt-4.1". Our RouterChatModel needs role names, not real
+# model strings — these env vars wire that up.
+#
+# `os.environ.setdefault` means users can still override per-process
+# via a `.env` file or shell exports (the langgraph dev server loads
+# `.env` automatically).
+for k, v in (
+    ("RESEARCH_MODEL", "supervisor"),
+    ("SUMMARIZATION_MODEL", "compressor"),
+    ("COMPRESSION_MODEL", "compressor"),
+    ("FINAL_REPORT_MODEL", "final_report"),
+    ("ALLOW_CLARIFICATION", "false"),
+    ("MAX_CONCURRENT_RESEARCH_UNITS", "2"),
+    ("MAX_RESEARCHER_ITERATIONS", "3"),
+    ("MAX_REACT_TOOL_CALLS", "4"),
+    ("MAX_STRUCTURED_OUTPUT_RETRIES", "2"),
+    ("MAX_CONTENT_LENGTH", "8000"),
+    ("SEARCH_API", "none"),
+):
+    os.environ.setdefault(k, v)
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
