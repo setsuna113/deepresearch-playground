@@ -39,3 +39,6 @@ config/config.local.yaml
 # Logs
 logs/
 *.log
+
+# LangGraph dev server runtime state (langgraph dev / Studio)
+.langgraph_api/
