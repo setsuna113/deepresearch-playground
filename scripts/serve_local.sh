@@ -34,4 +34,6 @@ exec "${SERVING_VENV}/bin/vllm" serve "${MODEL}" \
   --max-model-len "${MAX_LEN}" \
   --gpu-memory-utilization "${GPU_UTIL}" \
   --enforce-eager \
-  --dtype float16
+  --dtype float16 \
+  --enable-auto-tool-choice \
+  --tool-call-parser qwen3_xml

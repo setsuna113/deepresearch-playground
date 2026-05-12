@@ -119,29 +119,34 @@ def _stringify(v: Any) -> str:
 
 
 def _build_reme_args(section: ReMeSection) -> tuple[list[str], dict[str, str | None]]:
-    """Translate our ReMe config into CLI-style override args + kwargs.
+    """Translate our ReMe config into CLI-style override args.
 
     Mirrors the `reme backend=http llm.default.model_name=... ...`
     invocation style documented in ReMeApp.__init__.
+
+    Two known sharp edges with flowllm's CLI parser:
+
+    1. `vector_store.default.params={...}` is parsed as a literal string,
+       not a dict, so the qdrant URL override goes through as text and
+       ReMe's pydantic ServiceConfig rejects it. We therefore do NOT
+       override `vector_store` at all here; ReMe uses its default
+       in-memory vector store. Our working memory keeps its own Qdrant
+       collection separately.
+
+    2. `llm.default.model_name=local` is meaningless to flowllm. We use
+       a placeholder real-looking model name so init passes pydantic
+       validation; actual LLM calls inside ReMe summary flows hit the
+       endpoint at `llm_api_base` regardless of this string. If you
+       want ReMe writes to work properly, set FLOW_LLM_API_BASE in env.
     """
     args = [
         "backend=python",  # we drive flows directly; no HTTP/MCP service
         "llm.default.backend=openai_compatible",
-        # Use a generic instruction model name; ReMe will substitute via
-        # llm_api_base. Tests don't actually hit this.
-        f"llm.default.model_name={section.llm.endpoint or 'local'}",
+        "llm.default.model_name=gpt-4o-mini",  # placeholder; see (2) above
         "embedding_model.default.backend=openai_compatible",
         f"embedding_model.default.model_name={section.embedding.model_id}",
-        f"vector_store.default.backend={section.vector_store.backend}",
+        # vector_store: intentionally NOT overridden (see (1) above).
     ]
-    # Qdrant-specific URL override.
-    if section.vector_store.backend == "qdrant":
-        args.append(
-            "vector_store.default.params={"
-            f"'url': '{section.vector_store.url}', "
-            f"'collection_prefix': '{section.vector_store.collection_prefix}'"
-            "}"
-        )
     return args, {}
 
 
