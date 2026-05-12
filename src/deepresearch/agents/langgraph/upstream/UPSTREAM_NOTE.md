@@ -55,6 +55,20 @@ Each item below records one local edit on top of the pinned source.
   no longer used by us, but remain in the file so the upstream public
   surface is intact for future re-sync.
 
+### Patch 5: defensive `response is None` fallback in `write_research_brief`
+- Files affected: `deep_researcher.py`
+- Change: when `research_model.ainvoke(...)` returns None (structured
+  output parser couldn't extract a `ResearchQuestion` after
+  `max_structured_output_retries`), fall back to the raw last user
+  message as the research brief instead of raising
+  `AttributeError("'NoneType' object has no attribute 'research_brief'")`.
+- Reason: smaller local models (Qwen3-8B-AWQ on our laptop, similar
+  parameter-class quantized models) fumble multi-turn structured
+  output with low probability per attempt; over the lifetime of a
+  thesis evaluation pass this would otherwise kill many runs at
+  step 2 of 7. The fallback keeps the pipeline running with a
+  degraded brief instead of an empty SQLite row.
+
 ### Patch 4: summarization model factory hook in `utils.py`
 - Files affected: `utils.py`
 - Change: replaced `summarization_model = init_chat_model(...)` inside

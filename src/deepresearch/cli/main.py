@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
-import typer
+import os
+import sys
 
-from deepresearch.cli import db as db_cmd
-from deepresearch.cli import eval as eval_cmd
-from deepresearch.cli import memory as memory_cmd
-from deepresearch.cli import run as run_cmd
+# Suppress flowllm/reme_ai's loguru INFO firehose (timer ops, flow
+# printouts) before importing anything that touches them. Users can
+# override with DR_LOGURU_LEVEL=INFO if they want the full trace.
+_DR_LOGURU_LEVEL = os.environ.get("DR_LOGURU_LEVEL", "WARNING").upper()
+try:  # pragma: no cover - best-effort; loguru is a flowllm transitive dep
+    from loguru import logger as _loguru_logger
+
+    _loguru_logger.remove()
+    _loguru_logger.add(sys.stderr, level=_DR_LOGURU_LEVEL)
+except ImportError:
+    pass
+
+import typer  # noqa: E402
+
+from deepresearch.cli import db as db_cmd  # noqa: E402
+from deepresearch.cli import eval as eval_cmd  # noqa: E402
+from deepresearch.cli import memory as memory_cmd  # noqa: E402
+from deepresearch.cli import run as run_cmd  # noqa: E402
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="deepresearch CLI")
 app.command(name="run", help="Run a research query end-to-end.")(run_cmd.cmd_run)

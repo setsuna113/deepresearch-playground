@@ -155,23 +155,39 @@ async def write_research_brief(state: AgentState, config: RunnableConfig) -> Com
         date=get_today_str()
     )
     response = await research_model.ainvoke([HumanMessage(content=prompt_content)])
-    
+
+    # PATCH 5 (see UPSTREAM_NOTE.md): smaller local models (Qwen3-8B-AWQ,
+    # similar) sometimes fail to emit a structured ResearchQuestion tool
+    # call within max_structured_output_retries attempts; the parser then
+    # returns None and `response.research_brief` raises AttributeError.
+    # Fall back to the raw user query so the run continues degraded but
+    # complete, instead of aborting.
+    if response is None or getattr(response, "research_brief", None) is None:
+        last_user = ""
+        for m in reversed(state.get("messages", [])):
+            if isinstance(m, HumanMessage):
+                last_user = m.content if isinstance(m.content, str) else str(m.content)
+                break
+        research_brief_text = last_user or "(no research brief produced)"
+    else:
+        research_brief_text = response.research_brief
+
     # Step 3: Initialize supervisor with research brief and instructions
     supervisor_system_prompt = lead_researcher_prompt.format(
         date=get_today_str(),
         max_concurrent_research_units=configurable.max_concurrent_research_units,
         max_researcher_iterations=configurable.max_researcher_iterations
     )
-    
+
     return Command(
-        goto="research_supervisor", 
+        goto="research_supervisor",
         update={
-            "research_brief": response.research_brief,
+            "research_brief": research_brief_text,
             "supervisor_messages": {
                 "type": "override",
                 "value": [
                     SystemMessage(content=supervisor_system_prompt),
-                    HumanMessage(content=response.research_brief)
+                    HumanMessage(content=research_brief_text)
                 ]
             }
         }
