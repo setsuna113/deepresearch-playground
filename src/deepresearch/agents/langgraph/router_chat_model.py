@@ -27,6 +27,9 @@ layer sets these to our role names: "supervisor", "compressor",
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Iterator, Optional, Sequence, Union
 from uuid import UUID
 
@@ -361,15 +364,22 @@ class RouterConfigurableModel(Runnable[LanguageModelInput, AIMessage]):
 
     # -- Materialization --
     def _materialize(self, runtime_config: Optional[RunnableConfig] = None) -> Runnable:
-        role = self._default_config.get("model")
-        if role is None and runtime_config is not None:
-            role = runtime_config.get("configurable", {}).get("model")
+        # Merge our captured default_config with anything LangChain
+        # promoted into `runtime_config["configurable"]` (e.g., via a
+        # `RunnableBinding.with_config` upstream of us).
+        cfg: dict[str, Any] = dict(self._default_config)
+        if runtime_config is not None:
+            configurable = runtime_config.get("configurable") or {}
+            for k in ("model", "max_tokens", "api_key"):
+                if k in configurable and k not in cfg:
+                    cfg[k] = configurable[k]
+        role = cfg.get("model")
         if not role:
             raise RuntimeError(
                 "RouterChatModel requires a role; none was supplied via "
                 ".with_config({'model': '<role>'})"
             )
-        max_tokens = self._default_config.get("max_tokens")
+        max_tokens = cfg.get("max_tokens")
         model: Runnable = RouterChatModel(
             deps=self._deps,
             profile_name=self._profile_name,
@@ -443,8 +453,87 @@ def build_router_configurable_model(
     )
 
 
+# ----------------------------------------------------------------------
+# ContextVar-based active-run mechanism.
+#
+# The vendored open_deep_research keeps `configurable_model` as a
+# module-level singleton. To inject our `RouterConfigurableModel` per
+# run (with run-specific deps + privacy envelope) without modifying
+# every upstream node function, we provide a lazy proxy whose attribute
+# accesses delegate to a contextvar-bound `RouterConfigurableModel`.
+#
+# `runtime.run_research` enters `active_run_context(...)` before
+# invoking the graph; the proxy then sees the active instance. Since
+# ContextVars propagate through asyncio tasks (including those spawned
+# by `asyncio.gather` for parallel researchers), concurrent runs are
+# safe as long as they each enter their own context.
+# ----------------------------------------------------------------------
+
+
+@dataclass
+class _ActiveRun:
+    deps: Any
+    request: Any
+    run_id: Any
+
+
+_active_run_var: ContextVar[Optional[_ActiveRun]] = ContextVar(
+    "deepresearch_active_run", default=None
+)
+
+
+def get_active_router_model() -> RouterConfigurableModel:
+    """Return a fresh `RouterConfigurableModel` for the active run.
+
+    Raises if no `active_run_context(...)` is in scope — meaning the
+    vendored graph was invoked without runtime.py setting up the context,
+    which is a developer error.
+    """
+    active = _active_run_var.get()
+    if active is None:
+        raise RuntimeError(
+            "RouterChatModel: no active run context. Wrap the graph "
+            "invocation with `active_run_context(deps, request, run_id)`."
+        )
+    return build_router_configurable_model(
+        deps=active.deps, request=active.request, run_id=active.run_id
+    )
+
+
+@contextmanager
+def active_run_context(*, deps: Any, request: Any, run_id: Any):
+    """Bind (deps, request, run_id) for the duration of a graph invocation."""
+    token = _active_run_var.set(_ActiveRun(deps=deps, request=request, run_id=run_id))
+    try:
+        yield
+    finally:
+        _active_run_var.reset(token)
+
+
+class _LazyConfigurableModelProxy:
+    """Module-level stand-in for the vendored `configurable_model`.
+
+    Every attribute access resolves the active `RouterConfigurableModel`
+    via the contextvar and delegates. Forwards the small subset of
+    methods upstream actually calls: `with_config`, `with_structured_output`,
+    `with_retry`, `bind_tools`, `with_fallbacks`, `ainvoke`, `invoke`,
+    `astream`, `stream`. AttributeError on anything else.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(get_active_router_model(), name)
+
+
+# Singleton expected by the vendored module-level
+# `configurable_model = init_chat_model(...)` replacement.
+configurable_model_proxy = _LazyConfigurableModelProxy()
+
+
 __all__ = [
     "RouterChatModel",
     "RouterConfigurableModel",
     "build_router_configurable_model",
+    "active_run_context",
+    "get_active_router_model",
+    "configurable_model_proxy",
 ]

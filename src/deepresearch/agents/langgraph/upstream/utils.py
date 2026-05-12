@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 import aiohttp
-from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -81,16 +80,22 @@ async def tavily_search(
     # Character limit to stay within model token limits (configurable)
     max_char_to_include = configurable.max_content_length
     
-    # Initialize summarization model with retry logic
-    model_api_key = get_api_key_for_model(configurable.summarization_model, config)
-    summarization_model = init_chat_model(
-        model=configurable.summarization_model,
-        max_tokens=configurable.summarization_model_max_tokens,
-        api_key=model_api_key,
-        tags=["langsmith:nostream"]
-    ).with_structured_output(Summary).with_retry(
-        stop_after_attempt=configurable.max_structured_output_retries
+    # PATCH 4 (see UPSTREAM_NOTE.md): route the summarization model
+    # through our RouterChatModel so it observes Router.select(). The
+    # active context is supplied by `runtime.run_research` via a
+    # contextvar.
+    from deepresearch.agents.langgraph.router_chat_model import (
+        get_active_router_model,
     )
+    summarization_model = get_active_router_model().with_structured_output(
+        Summary
+    ).with_retry(
+        stop_after_attempt=configurable.max_structured_output_retries
+    ).with_config({
+        "model": configurable.summarization_model,
+        "max_tokens": configurable.summarization_model_max_tokens,
+        "tags": ["langsmith:nostream"],
+    })
     
     # Step 4: Create summarization tasks (skip empty content)
     async def noop():

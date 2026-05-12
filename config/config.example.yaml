@@ -22,17 +22,20 @@ models:
       model_id: gpt-4o-mini
       role_hint: judge
   profiles:
+    # Phase 1.5 LangGraph roles. The legacy STORM keys (planner, searcher,
+    # reader, synthesizer) are still accepted by ModelProfileConfig but
+    # not routed to — left here as a migration aid.
     phase1_default:
-      planner: local
-      searcher: local
-      reader: local
-      synthesizer: local
+      supervisor: local
+      researcher: local
+      compressor: local
+      final_report: local
       reflector: local
     co_schedule_v0:
-      planner: local
-      searcher: local
-      reader: cloud
-      synthesizer: cloud
+      supervisor: local
+      researcher: cloud
+      compressor: local
+      final_report: cloud
       reflector: local
 
 memory:

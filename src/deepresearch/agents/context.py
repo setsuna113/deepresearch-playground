@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from deepresearch.agents.base import Agent  # noqa: F401  (helps IDEs resolve)
 from deepresearch.config.schema import AppConfig
 from deepresearch.memory.profiles import MemoryProfile
 from deepresearch.memory.service import MemoryService

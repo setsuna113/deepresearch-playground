@@ -30,10 +30,10 @@ models:
       model_id: test-model
   profiles:
     phase1_default:
-      planner: local
-      searcher: local
-      reader: local
-      synthesizer: local
+      supervisor: local
+      researcher: local
+      compressor: local
+      final_report: local
       reflector: local
 
 memory:

@@ -18,7 +18,7 @@ uv run deepresearch run \
 uv run deepresearch run "AWQ vs GPTQ trade-offs again" \
   --user alice --project thesis --depth quick --max-searches 2
 
-uv run deepresearch memory query "AWQ" --user alice --project thesis --type procedural
+uv run deepresearch memory query "AWQ" --user alice --project thesis --type task
 
 # 3. No-memory ablation
 uv run deepresearch run "AWQ vs GPTQ trade-offs" \

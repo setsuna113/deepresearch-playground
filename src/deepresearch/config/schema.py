@@ -22,11 +22,28 @@ class EndpointConfig(BaseModel):
 
 
 class ModelProfileConfig(BaseModel):
-    planner: str
-    searcher: str
-    reader: str
-    synthesizer: str
-    reflector: str
+    """Maps role name -> endpoint name for one model profile.
+
+    Phase 1.5: the new LangGraph role set lives here. Legacy STORM
+    fields stay optional for transition compatibility — they're never
+    routed to but their presence in YAML doesn't break loading.
+    """
+
+    # LangGraph roles (used by RouterChatModel post-1.5).
+    supervisor: str = "local"
+    researcher: str = "local"
+    compressor: str = "local"
+    final_report: str = "local"
+    reflector: str = "local"
+
+    # Legacy STORM roles — accepted but unused; remove once all YAML
+    # configs are updated.
+    planner: str | None = None
+    searcher: str | None = None
+    reader: str | None = None
+    synthesizer: str | None = None
+
+    model_config = {"extra": "ignore"}
 
 
 class ModelsSection(BaseModel):

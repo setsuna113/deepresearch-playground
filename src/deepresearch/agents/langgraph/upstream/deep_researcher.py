@@ -3,7 +3,6 @@
 import asyncio
 from typing import Literal
 
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -52,9 +51,13 @@ from deepresearch.agents.langgraph.upstream.utils import (
     think_tool,
 )
 
-# Initialize a configurable model that we will use throughout the agent
-configurable_model = init_chat_model(
-    configurable_fields=("model", "max_tokens", "api_key"),
+# PATCH 2 (see UPSTREAM_NOTE.md): the module-level `configurable_model`
+# is replaced with a lazy proxy that resolves to a per-run
+# `RouterConfigurableModel` via a contextvar bound in
+# `deepresearch.agents.langgraph.runtime.run_research`. This is the
+# single seam that keeps every LLM call going through `Router.select()`.
+from deepresearch.agents.langgraph.router_chat_model import (
+    configurable_model_proxy as configurable_model,
 )
 
 async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Command[Literal["write_research_brief", "__end__"]]:
