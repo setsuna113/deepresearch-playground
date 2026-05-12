@@ -29,6 +29,20 @@ dependencies = [
   "pyyaml>=6,<7",
   "reme-ai>=0.3,<1",
   "flowllm>=0.2,<1",  # reme-ai 0.3.x imports from flowllm but doesn't declare it
+  # LangChain 0.3.x line. open_deep_research @ 0dd30bd was pinned to
+  # langgraph>=0.5.4 / langchain-openai>=0.3.28 (April 2026). LangChain
+  # has since released 1.x; we stay on 0.3.x to match the vendored API.
+  "langchain-core>=0.3.86,<0.4",
+  "langchain>=0.3.30,<0.4",
+  "langchain-openai>=0.3.35,<0.4",
+  "langgraph>=0.6.11,<0.7",
+  "langgraph-checkpoint>=2.0.5,<3",
+  # open_deep_research vendored code imports langchain_mcp_adapters and mcp.
+  # Pin these too so vendored utils.py imports resolve at runtime.
+  # 0.2.x requires langchain-core>=1.0; we stay on 0.1.x to match the
+  # vendored open_deep_research at 0dd30bd.
+  "langchain-mcp-adapters>=0.1.6,<0.2",
+  "mcp>=1.0,<2",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +53,7 @@ dev = [
   "ruff>=0.7,<1",
   "mypy>=1.13,<2",
   "respx>=0.21,<1",
+  "pytest-mock>=3.14,<4",
 ]
 
 [project.scripts]
