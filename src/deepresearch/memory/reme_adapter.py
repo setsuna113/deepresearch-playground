@@ -172,6 +172,10 @@ def _build_reme_args(section: ReMeSection) -> tuple[list[str], dict[str, str | N
 
     args = [
         "backend=python",  # we drive flows directly; no HTTP/MCP service
+        # Suppress flowllm's Application.init_logger() from re-adding INFO
+        # sinks; we own loguru config in cli/main.py.
+        "init_logger=false",
+        "enable_logo=false",
         "llm.default.backend=openai_compatible",
         f"llm.default.model_name={llm_model}",
         "embedding_model.default.backend=openai_compatible",
