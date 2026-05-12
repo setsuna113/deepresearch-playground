@@ -55,7 +55,7 @@ class ModelClient:
         self,
         *,
         endpoint_name: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         role: str,
         run_id: UUID | None = None,
         step_id: UUID | None = None,
@@ -63,6 +63,8 @@ class ModelClient:
         temperature: float = 0.3,
         max_tokens: int | None = None,
         response_format: dict[str, str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> ModelClientResponse:
         ep = self._endpoints.get(endpoint_name)
         client = self._client_for(ep)
@@ -75,6 +77,10 @@ class ModelClient:
             kwargs["max_tokens"] = max_tokens
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if tools is not None:
+            kwargs["tools"] = tools
+            if tool_choice is not None:
+                kwargs["tool_choice"] = tool_choice
 
         t0 = time.perf_counter()
         error: str | None = None

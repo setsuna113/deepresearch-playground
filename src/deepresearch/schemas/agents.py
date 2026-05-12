@@ -15,10 +15,19 @@ from pydantic import BaseModel, Field
 
 
 class AgentRole(str, Enum):
+    # Legacy STORM roles (Phase 1, pre-LangGraph). Kept until commit 3
+    # deletes the custom agents that emit them; existing SQLite rows
+    # continue to deserialize.
     planner = "planner"
     searcher = "searcher"
     reader = "reader"
     synthesizer = "synthesizer"
+    # LangGraph roles (Phase 1.5 onwards).
+    supervisor = "supervisor"
+    researcher = "researcher"
+    compressor = "compressor"
+    final_report = "final_report"
+    # Reflector spans both eras.
     reflector = "reflector"
 
 
