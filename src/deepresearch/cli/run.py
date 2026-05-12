@@ -91,7 +91,7 @@ def _print_model_call_table(deps, run_id) -> None:
     calls = deps.repos.model_calls.list_for_run(run_id)
     if not calls:
         return
-    calls = sorted(calls, key=lambda c: c.created_at)
+    calls = sorted(calls, key=lambda c: c.started_at)
     t = Table(title="LLM calls (which endpoint Qwen routed to)")
     t.add_column("#", justify="right")
     t.add_column("endpoint")
