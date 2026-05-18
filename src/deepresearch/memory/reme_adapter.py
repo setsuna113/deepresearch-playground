@@ -160,7 +160,10 @@ def _build_reme_args(section: ReMeSection) -> tuple[list[str], dict[str, str | N
         if deepseek_key:
             llm_api_key = deepseek_key
             llm_api_base = llm_api_base or "https://api.deepseek.com/v1"
-            llm_model = llm_model or "deepseek-chat"
+            # NB: DeepSeek deprecates `deepseek-chat` / `deepseek-reasoner` on
+            # 2026/07/24. `deepseek-v4-pro` is the current Pro tier and matches
+            # `config.local.yaml:models.endpoints.cloud.model_id`.
+            llm_model = llm_model or "deepseek-v4-pro"
 
     # If still nothing, fall back to OPENAI defaults — ReMe will look
     # up OPENAI_API_KEY itself if neither kwarg is supplied.

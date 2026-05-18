@@ -39,7 +39,6 @@ from deepresearch.config.schema import ReMeSection
 from deepresearch.memory.reme_adapter import ReMeAdapter
 from deepresearch.schemas.memory import MemoryType
 
-
 pytestmark = pytest.mark.skipif(
     os.environ.get("LIVE_REME") != "1",
     reason="Set LIVE_REME=1 to run live ReMe smoke tests",

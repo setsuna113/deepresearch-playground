@@ -18,9 +18,7 @@ the wiring around the seam is real.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 

@@ -58,6 +58,11 @@ dev = [
   "mypy>=1.13,<2",
   "respx>=0.21,<1",
   "pytest-mock>=3.14,<4",
+  # langgraph dev server + Python client for studio_client_driver.py.
+  # langgraph-cli[inmem] pulls langgraph-api + langgraph-runtime-inmem so
+  # `.venv/bin/langgraph dev` serves the graph defined in `langgraph.json`.
+  "langgraph-cli[inmem]>=0.4,<1",
+  "langgraph-sdk>=0.2,<1",
 ]
 
 [project.scripts]
