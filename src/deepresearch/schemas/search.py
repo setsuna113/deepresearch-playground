@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ class SearchDocument(BaseModel):
     title: str | None = None
     snippet: str | None = None
     content_md: str | None = None
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     source_provider: str = "tavily"
     score: float | None = None
 

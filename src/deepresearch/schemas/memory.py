@@ -7,7 +7,7 @@ native 3-type taxonomy where needed.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
@@ -52,4 +52,4 @@ class MemoryEvent(BaseModel):
     query: str | None = None
     records: list[MemoryRecord] = Field(default_factory=list)
     backend: str = "reme"  # "reme" | "working_qdrant"
-    at: datetime = Field(default_factory=datetime.utcnow)
+    at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -86,7 +86,16 @@ class ModelClient:
         error: str | None = None
         try:
             resp = await client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
-            text = resp.choices[0].message.content or ""
+            _msg = resp.choices[0].message
+            text = _msg.content or ""
+            # DeepSeek's reasoning models (v4-flash, v4-pro) put their
+            # actual answer text under `reasoning_content` when the
+            # output budget is small or the model decides to stay in
+            # reasoning mode. Fall back so the caller sees SOMETHING
+            # rather than an empty string that downstream nodes treat
+            # as "no report".
+            if not text:
+                text = getattr(_msg, "reasoning_content", "") or ""
             usage = resp.usage
             prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
             completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0

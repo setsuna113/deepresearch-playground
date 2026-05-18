@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlmodel import select
@@ -68,7 +68,7 @@ class RunRepo:
             if row is None:
                 raise KeyError(run_id)
             row.status = RunStatus.running.value
-            row.started_at = datetime.utcnow()
+            row.started_at = datetime.now(UTC)
             s.add(row)
 
     def mark_done(self, run: ResearchRun) -> None:
@@ -77,7 +77,7 @@ class RunRepo:
             if row is None:
                 raise KeyError(run.id)
             row.status = run.status.value
-            row.finished_at = run.finished_at or datetime.utcnow()
+            row.finished_at = run.finished_at or datetime.now(UTC)
             row.report_md = run.report_md
             row.citations_json = _json_dumps([c.model_dump() for c in run.citations])
             row.error = run.error

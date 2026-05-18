@@ -231,7 +231,31 @@ async def supervisor(state: SupervisorState, config: RunnableConfig) -> Command[
     # Step 2: Generate supervisor response based on current context
     supervisor_messages = state.get("supervisor_messages", [])
     response = await research_model.ainvoke(supervisor_messages)
-    
+
+    # PATCH 7 (see UPSTREAM_NOTE.md): smaller local models (e.g.
+    # Qwen3-8B-AWQ) occasionally exhaust `max_structured_output_retries`
+    # and return either None or an AIMessage with empty content + empty
+    # tool_calls. The downstream `supervisor_tools` reads
+    # `most_recent_message.tool_calls`; None would crash with
+    # AttributeError and the empty case loops without progress. Synthesize
+    # a deterministic ResearchComplete tool call so the loop exits with
+    # intent (visible in the trace) rather than silently or with a crash.
+    if response is None or (
+        not getattr(response, "tool_calls", None)
+        and not (getattr(response, "content", "") or "").strip()
+    ):
+        response = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "synth_research_complete",
+                    "name": "ResearchComplete",
+                    "args": {},
+                    "type": "tool_call",
+                }
+            ],
+        )
+
     # Step 3: Update state and proceed to tool execution
     return Command(
         goto="supervisor_tools",
@@ -349,9 +373,14 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                 update_payload["raw_notes"] = [raw_notes_concat]
                 
         except Exception as e:
-            # Handle research execution errors
-            if is_token_limit_exceeded(e, configurable.research_model) or True:
-                # Token limit exceeded or other error - end research phase
+            # PATCH 6 (see UPSTREAM_NOTE.md): upstream's `or True` swallowed
+            # every exception and exited the supervisor to END, hiding
+            # transient ReMe/SQLite/network errors behind a "token limit"
+            # appearance in the trace. We exit gracefully only on real
+            # token-limit overflow; anything else propagates to
+            # runtime.run_research so the run is marked failed with the
+            # actual error in `run.error`.
+            if is_token_limit_exceeded(e, configurable.research_model):
                 return Command(
                     goto=END,
                     update={
@@ -359,6 +388,7 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                         "research_brief": state.get("research_brief", "")
                     }
                 )
+            raise
     
     # Step 3: Return command with all tool results
     update_payload["supervisor_messages"] = all_tool_messages
@@ -432,7 +462,27 @@ async def researcher(state: ResearcherState, config: RunnableConfig) -> Command[
     # Step 3: Generate researcher response with system context
     messages = [SystemMessage(content=researcher_prompt)] + researcher_messages
     response = await research_model.ainvoke(messages)
-    
+
+    # PATCH 7 (see UPSTREAM_NOTE.md): mirror the supervisor's defensive
+    # fallback. If the model returned None or an AIMessage with neither
+    # content nor tool_calls, synthesize a ResearchComplete tool call so
+    # `researcher_tools` exits cleanly to `compress_research` with intent.
+    if response is None or (
+        not getattr(response, "tool_calls", None)
+        and not (getattr(response, "content", "") or "").strip()
+    ):
+        response = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "synth_research_complete",
+                    "name": "ResearchComplete",
+                    "args": {},
+                    "type": "tool_call",
+                }
+            ],
+        )
+
     # Step 4: Update state and proceed to tool execution
     return Command(
         goto="researcher_tools",

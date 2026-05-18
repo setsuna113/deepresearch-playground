@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -39,7 +39,7 @@ class ModelCallRecord(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_ms: int = 0
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     envelope: PrivacyEnvelope = Field(default_factory=PrivacyEnvelope.default_public)
     request_hash: str | None = None
     error: str | None = None

@@ -22,12 +22,22 @@ def cmd_run(
     project: str = typer.Option("default", "--project", "-p"),
     depth: Depth = typer.Option(Depth.standard, "--depth"),
     max_searches: int = typer.Option(5, "--max-searches"),
+    max_concurrent: int = typer.Option(2, "--max-concurrent", help="Concurrent researcher subgraphs."),
     model_profile: str = typer.Option("phase1_default", "--model-profile"),
     memory_profile: str = typer.Option("default", "--memory-profile"),
+    minimal: bool = typer.Option(
+        False,
+        "--minimal",
+        help="Thesis-baseline preset: caps researcher iterations and concurrency to 1.",
+    ),
     out_dir: Path = typer.Option(Path("./data/runs"), "--out-dir"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show step inputs/outputs."),
 ) -> None:
     """Run a research query end-to-end and write a Markdown report."""
+
+    if minimal:
+        max_searches = 1
+        max_concurrent = 1
 
     async def _go() -> None:
         cfg = get_config()
@@ -39,6 +49,7 @@ def cmd_run(
             project_id=project,
             depth=depth,
             max_searches=max_searches,
+            max_concurrent_units=max_concurrent,
             model_profile=model_profile,
             memory_profile=memory_profile,
         )

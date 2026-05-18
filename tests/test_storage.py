@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from deepresearch.config import get_config
 from deepresearch.schemas.agents import AgentRole, AgentStep, StepStatus
@@ -27,8 +27,8 @@ def test_run_step_memory_roundtrip():
         seq=1,
         role=AgentRole.planner,
         status=StepStatus.ok,
-        started_at=datetime.utcnow(),
-        finished_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
         latency_ms=10,
     )
     repos.steps.append(step)
@@ -59,7 +59,7 @@ def test_run_get_after_done():
     repos.runs.create(run)
     run.status = RunStatus.done
     run.report_md = "hello"
-    run.finished_at = datetime.utcnow()
+    run.finished_at = datetime.now(UTC)
     repos.runs.mark_done(run)
 
     back = repos.runs.get(run.id)

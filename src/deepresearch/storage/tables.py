@@ -4,7 +4,7 @@ later phases will reshape these fields several times."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import UniqueConstraint
@@ -12,7 +12,7 @@ from sqlmodel import Field, SQLModel
 
 
 def utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(UTC)
 
 
 class ResearchRunTable(SQLModel, table=True):

@@ -6,7 +6,7 @@ in Phase 1 the Reflector may emit it but no consumer reads it yet.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
@@ -45,7 +45,7 @@ class AgentStep(BaseModel):
     status: StepStatus = StepStatus.ok
     input: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] = Field(default_factory=dict)
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     latency_ms: int = 0
     model_call_ids: list[UUID] = Field(default_factory=list)

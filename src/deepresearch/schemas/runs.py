@@ -3,7 +3,7 @@ are the public API contract."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -32,6 +32,7 @@ class RunRequest(BaseModel):
     project_id: str
     depth: Depth = Depth.standard
     max_searches: int = Field(default=5, ge=1, le=50)
+    max_concurrent_units: int = Field(default=2, ge=1, le=8)
     model_profile: str = "phase1_default"
     memory_profile: str = "default"
     privacy_envelope: PrivacyEnvelope = Field(default_factory=PrivacyEnvelope.default_public)
@@ -51,7 +52,7 @@ class ResearchRun(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     request: RunRequest
     status: RunStatus = RunStatus.pending
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
     report_md: str | None = None

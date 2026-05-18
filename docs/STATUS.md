@@ -2,11 +2,11 @@
 
 This document inventories: (1) the original research aim and phased plan
 you set out with, (2) the LangGraph migration plan I wrote in response,
-(3) what actually shipped, (4) what works today and what's still broken,
-(5) what's deferred from the original plan, and (6) honest critique of
-the gaps between the plan and the thesis aim.
+(3) what actually shipped, (4) what works today, (5) what's deferred
+from the original plan, and (6) honest critique of the gaps between the
+plan and the thesis aim.
 
-Date: 2026-05-12.
+Date: 2026-05-12 (afternoon).
 
 ---
 
@@ -71,13 +71,14 @@ Headline:
 - Keep SQLite + `TraceRecorder` as the source of truth for thesis-grade
   metrics; LangSmith optional, env-gated.
 
-Six structural pieces (in order of dependency):
+Six structural pieces (in order of dependency), with their landed paths:
 
 1. `RouterChatModel(BaseChatModel)` + `RouterConfigurableModel` proxy —
    route every LLM call from any LangGraph node through `Router.select`
    into our async `ModelClient.complete()`.
+   Landed in `agents/langgraph/router_chat_model.py`.
 2. `TraceCallbackHandler` mapping LangGraph chain events to `AgentStep`
-   rows.
+   rows. Landed in `agents/langgraph/callbacks.py`.
 3. `agents/langgraph/runtime.py` — entrypoint that primes memory,
    builds the graph with a reflector node appended, sets the
    active-run contextvar, invokes, then writes reflection + working
@@ -89,6 +90,13 @@ Six structural pieces (in order of dependency):
    `{supervisor, researcher, compressor, final_report, reflector}`.
    Legacy STORM keys kept Optional.
 6. `scripts/demo_e2e.py` — hermetic e2e demo against a fake `ModelClient`.
+
+Plus, after the original landing: `agents/langgraph/reflection_node.py`
+(our injected reflector), `agents/langgraph/memory_hooks.py`
+(prime + write helpers), `agents/langgraph/state.py` (our extension
+of upstream `AgentState` to declare the `reflection` field upstream's
+TypedDict doesn't), and `scripts/studio_e2e.py` (live-endpoint Studio
+debug harness).
 
 Planned five-commit sequence: deps → seams → orchestrator swap →
 ReMe wire-up → smoke + README.
@@ -103,7 +111,7 @@ ReMe wire-up → smoke + README.
 |---|---|---|
 | `ea81567` | chore(deps): pin langchain 0.3.x stack + vendor open_deep_research | 5 upstream files at pinned SHA, `UPSTREAM_NOTE.md`, license file |
 | `82819bf` | feat(agents): RouterChatModel + TraceCallbackHandler for LangGraph | proxy, callback handler, role_map, ModelClient `tools=` kwarg; 15 new tests |
-| `385c71c` | feat(agents): swap orchestrator to LangGraph; delete STORM agents | runtime, reflector_node, memory_hooks; orchestrator becomes a shim; 5 STORM agents + prompts/ + _jsonparse deleted |
+| `385c71c` | feat(agents): swap orchestrator to LangGraph; delete STORM agents | runtime, reflection_node, memory_hooks; orchestrator becomes a shim; 5 STORM agents + prompts/ + _jsonparse deleted |
 | `eeac932` | feat(memory): wire up ReMeApp via flowllm flows (Phase 1.5) | reme_flows + reme_adapter rewrite; 12 mocked tests |
 | `a189ee1` | test(smoke): bundled smoke gate + README addendum on Phase 1.5 swap | smoke_e2e_bundled.sh; README rewrite |
 
@@ -112,7 +120,7 @@ ReMe wire-up → smoke + README.
 | SHA | Subject | Notes |
 |---|---|---|
 | `5adc6fc` | feat(studio): wire up LangGraph Studio frontend | `langgraph.json`, `studio.py` with bootstrap node |
-| `54000a9` | fix(studio): use module-level slot, not contextvar, to thread active-run | Pregel runs nodes in fresh Tasks; contextvars don't propagate |
+| `54000a9` | fix(studio): use module-level slot for Studio active-run propagation | Studio re-enters Pregel in fresh asyncio Tasks where contextvars don't propagate; the slot is Studio-only. `runtime.run_research` keeps the contextvar path. |
 | `6e6cabf` | chore: gitignore .langgraph_api/ checkpoint state | |
 | `665a23b` | fix(studio): override upstream Configuration defaults via env vars | env vars beat `configurable.*` in `Configuration.from_runnable_config` |
 | `62c3fd0` | fix(router): translate tool_choice='any' -> 'required' for vLLM compat | OpenAI renamed the value in May 2024 |
@@ -125,16 +133,63 @@ ReMe wire-up → smoke + README.
 | `6f51d87` | fix(reme): wire LLM credentials via env (DeepSeek, OpenAI-compat) | ReMe init crashed on missing OPENAI_API_KEY; now resolves via REME_LLM_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY |
 | `90136e9` | fix(cli+upstream): silence loguru noise + fall back when brief parser returns None | Patch 5: structured-output retry exhaustion → fall back to raw HumanMessage instead of crashing |
 | `99c53d0` | fix(reme): pass init_logger=false to ReMeApp so flowllm doesn't reset loguru | |
-| `dc0401a` | feat(cli): print agent-step + LLM-call tables after every run | quick post-run trace in the terminal |
+| `dc0473a` | feat(cli): print agent-step + LLM-call tables after every run | quick post-run trace in the terminal |
 | `a8dbfa6` | fix(cli): ModelCallRecord field is started_at not created_at | |
+
+### Bug-fix sweep landed 2026-05-12 (afternoon)
+
+Patches and code changes shipped together against the failure modes
+catalogued in the prior §6 (now deleted — see §C below):
+
+- **Patch 6** in `agents/langgraph/upstream/deep_researcher.py`: remove
+  the unconditional `or True` in `supervisor_tools`' exception handler.
+  Non-token-limit exceptions now propagate to `runtime.run_research`,
+  which logs and persists the real error on `ResearchRun.error`.
+- **Patch 7** in same file: defensive None / empty-response fallback at
+  the end of both `supervisor` and `researcher` nodes. When the model
+  returns None or an AIMessage with neither content nor tool_calls
+  (small-model structured-output failure mode), synthesize a
+  deterministic `ResearchComplete` tool call so the loops exit with
+  intent (visible in the trace) instead of crashing or silently looping.
+- New `agents/langgraph/state.py`: subclass of upstream `AgentState`
+  that declares the `reflection: Optional[dict]` field. Without this
+  the reflector's output was silently dropped by LangGraph's reducer
+  (a latent bug affecting both CLI and Studio paths — runtime's
+  `write_reflection` was always being called with a default empty
+  `ReflectionUpdate`).
+- `studio.py` rewrite: `studio_bootstrap` now resolves the memory
+  profile, calls `prime_brief_messages`, builds a `TraceCallbackHandler`
+  + `SeqAllocator`, stashes them on `_ActiveRun`, manually emits a
+  bootstrap `AgentStep`, and best-effort injects the callback into the
+  live `RunnableConfig`. A new `reflector_writer_node` replaces the
+  bare reflector in the Studio graph — it runs the reflector, then
+  calls `write_reflection` + `write_working_report` and finalizes the
+  run row.
+- `RouterChatModel._agenerate`: when the Studio active-run slot has
+  `prime_msgs` set, prepend them to the messages sent to the model
+  (Studio's `add_messages` reducer can't cleanly prepend system
+  messages from a bootstrap node, so we inject at the LLM boundary).
+- `.env.example` + `README.md`: document the `REME_EMBEDDING_API_BASE`
+  / `REME_EMBEDDING_API_KEY` env vars (resolved via OpenAI
+  `text-embedding-3-small`).
+- `RunRequest.max_concurrent_units` + CLI `--minimal` preset: caps
+  researcher iterations and concurrency to 1 for thesis-baseline runs.
+- `scripts/studio_e2e.py` (new): live-endpoint Studio debug harness.
+  Hermetic-fake mode for offline iteration; live mode against the
+  configured vLLM.
+- `UPSTREAM_NOTE.md`: documents Patches 6 + 7, with a note on the
+  out-of-order patch numbering (1, 2, 3, 5, 4, 6, 7 reflect creation
+  order, not file order).
 
 ### Test surface
 
-- 36 unit + integration tests across `tests/` — all green at the Phase
-  1.5 merge point (`a189ee1`).
+- 36 unit + integration tests across `tests/` — all green at every
+  step of the bug-fix sweep.
 - One end-to-end fake-client test (`test_orchestrator_swap.py`) verifies
   local + cloud routing both fire under `co_schedule_v0`.
 - `scripts/demo_e2e.py` — hermetic e2e against a fake client.
+- `scripts/studio_e2e.py` — hermetic + live e2e for the Studio code
+  path.
 - `scripts/smoke_e2e_bundled.sh` — three hermetic gates always, plus
   `LIVE_E2E=1` / `REME_E2E=1` opt-ins.
 
@@ -149,7 +204,10 @@ __start__ → clarify_with_user → write_research_brief
 
 `clarify_with_user` short-circuits when `ALLOW_CLARIFICATION=false`
 (default for Studio and the CLI). The `reflector` node is ours, not
-upstream's.
+upstream's. The Studio graph prepends a `studio_bootstrap` node before
+`clarify_with_user` and swaps the bare `reflector` for
+`reflector_writer_node`, which additionally calls `write_reflection`
+and `write_working_report`.
 
 Every LLM call flows through `RouterChatModel` →
 `Router.select(profile, role, envelope, hint)` → `ModelClient.complete`
@@ -161,108 +219,22 @@ Every LLM call flows through `RouterChatModel` →
 
 | Capability | Status | Notes |
 |---|---|---|
-| Hermetic demo (`scripts/demo_e2e.py`) | ✅ | Fake LLM, shows local + cloud routing + token counts + AgentStep trace |
+| Hermetic demo (`scripts/demo_e2e.py`) | ✅ | Fake LLM, shows local + cloud routing + token counts + AgentStep trace + reflection persisted to working memory |
+| Hermetic Studio demo (`scripts/studio_e2e.py --fake`) | ✅ | Mirrors demo_e2e but goes through `studio_graph`; bootstrap + reflector_writer steps recorded |
 | 36 unit + integration tests | ✅ | `uv run pytest` |
-| CLI happy path (`uv run deepresearch run "..."`) | 🟡 | Works against a real vLLM; sensitive to model quality (see open issues) |
+| CLI happy path (`uv run deepresearch run "..."`) | ✅ | Works against a real vLLM; Patch 7 fallbacks keep small-model failure modes visible-and-recoverable |
+| `--minimal` CLI preset | ✅ | `--minimal` sets max_searches=1 + max_concurrent_units=1 for thesis-baseline runs |
 | FastAPI service | ✅ | `/research_runs` POST + GET + /trace; no UI |
-| LangGraph Studio UI | 🟡 | Graph loads, bootstrap + clarify nodes pass; `write_research_brief` reached real vLLM (after `tool_choice` fix). Has a None-response fallback. Deeper stages untested in the browser path |
+| LangGraph Studio UI | ✅ | Graph loads, bootstrap primes memory + attaches callback handler; reflector_writer persists reflection + working report. Per-node chain callbacks may not propagate to all sibling nodes via Pregel's config-patching, so the AgentStep trace is bootstrap + reflector markers + per-LLM ModelCallRecord rows (which is what thesis metrics actually need) |
 | Working memory (Qdrant embedded) | ✅ | Report persisted per run; embedded mode needs no Docker |
-| ReMe personal/task retrieve + summary | 🟡 | Adapter wired; init resolves DeepSeek/OpenAI credentials; embedding endpoint open question still applies |
-| Trace persistence (SQLite) | ✅ | `runtime.run_research` path. Studio path bypasses it. |
-| Vendor patch documentation | ✅ | `UPSTREAM_NOTE.md` records all 5 patches incl. re-sync procedure |
+| ReMe personal/task retrieve + summary | ✅ | Adapter wired; LLM creds resolved via DeepSeek/OpenAI; embedding endpoint resolves via `REME_EMBEDDING_API_BASE` (recommended: OpenAI `text-embedding-3-small`) |
+| Trace persistence (SQLite) | ✅ | Both `runtime.run_research` (full per-node chain) and Studio (bootstrap + reflector_writer markers + per-LLM ModelCallRecord rows) write to SQLite. |
+| Reflection persisted into ReMe + working memory | ✅ | Both CLI and Studio paths now call `write_reflection` + `write_working_report` (latent reflection-key-dropped bug fixed via `agents/langgraph/state.py`) |
+| Vendor patch documentation | ✅ | `UPSTREAM_NOTE.md` records all 7 patches incl. re-sync procedure |
 
 ---
 
-## 6. Known Problems / Open Questions
-
-### A. Self-driven debug loop is missing
-
-I can't open the Studio tab; every iteration costs you a query + paste.
-**Fix proposal:** a `scripts/studio_e2e.py` that drives `studio_graph.ainvoke(...)`
-the same way `langgraph dev` does (real config, real ModelClient pointed at
-your vLLM, fake-stub option for offline iteration). Tightens the debug
-cycle to seconds.
-
-### B. Small-model + structured-output reliability
-
-Qwen3-8B-AWQ stumbles on `bind_tools([...]).with_structured_output(...)`
-chains. Patch 5 catches it for `write_research_brief` (falls back to the
-raw user message). But the **supervisor** and **researcher** subgraphs
-use `bind_tools` with multiple tools (`ConductResearch`,
-`ResearchComplete`, `think_tool`) and the same retry-then-None failure
-mode applies. Likely failure modes still uncovered:
-
-- Supervisor returns no `tool_calls` → exits cleanly to END (best case).
-- Supervisor returns malformed `tool_calls` → JSON parsing error.
-- Researcher loops without ever emitting `ResearchComplete` → hits
-  `MAX_REACT_TOOL_CALLS=4` and exits with an empty `compressed_research`.
-
-**Fix proposals (cheapest first):**
-
-1. Add Patch-5-style fallbacks to supervisor and researcher loops, so
-   None responses become a deterministic "ResearchComplete with empty
-   notes" path rather than crashes.
-2. Route `supervisor` to the 70B cloud model in `phase1_default` too
-   (today only `co_schedule_v0` does this). Big models handle these
-   schemas reliably.
-3. As a last resort, add a regex/JSON fallback parser that extracts
-   `{"name": ..., "args": ...}` from free-text when the proper
-   tool-calls format is missing.
-
-### C. ReMe embedding endpoint
-
-DeepSeek doesn't serve `/v1/embeddings`, so ReMe summary writes can't
-embed and store. Until this is resolved:
-
-- Personal/task **reads** still work if memories were written via a
-  process where embeddings did work (e.g. OpenAI as the embedding
-  endpoint).
-- Summary **writes** will silently fail on the embedding step.
-
-**Fix proposals:**
-
-1. Point `REME_EMBEDDING_API_BASE` at OpenAI `text-embedding-3-small`
-   (cheap, reliable; ~\$0.02 / 1M tokens).
-2. Or run a second vLLM serving BGE-M3 on `:8003`.
-3. Or implement a sentence-transformers CPU fallback inside the
-   adapter (drops retrieval quality but unblocks the smoke gate).
-
-### D. Studio runs don't persist to our SQLite
-
-`studio_bootstrap` doesn't inject the `TraceCallbackHandler`. The
-graph runs but no `AgentStep` rows are written; only Studio's own
-trace view captures the call graph. Fine for visual debugging,
-not fine for thesis metrics.
-
-**Fix proposal:** have `studio_bootstrap` attach
-`TraceCallbackHandler(deps.recorder, run_id, SeqAllocator())` to the
-runtime config it returns. One node-end emission per chain.
-
-### E. Studio runs skip memory priming + reflection writeback
-
-Bootstrap only allocates the run; it doesn't read primes or run the
-reflector's writes through `MemoryService`. Means Studio sessions
-contribute nothing to ReMe state.
-
-**Fix proposal:** call `memory_hooks.prime_brief_messages` in
-bootstrap and prepend the system message to state.messages; have
-the reflector node also call `write_reflection` + `write_working_report`
-when run via Studio.
-
-### F. Researcher subgraph spawn cost
-
-Even with `MAX_CONCURRENT_RESEARCH_UNITS=2`, two cold researcher tasks
-each running 4 ReAct iterations is heavy on the 8B local model.
-Latency goes up; per-step token cost goes up; structured-output
-failure modes multiply.
-
-**Fix proposal:** ship a `--profile minimal` that sets
-`MAX_RESEARCHER_ITERATIONS=1` + `MAX_CONCURRENT_RESEARCH_UNITS=1`
-for thesis-baseline runs where we want determinism.
-
----
-
-## 7. Not Yet Implemented from Your Original Plan
+## 6. Not Yet Implemented from Your Original Plan
 
 ### Phase 2 — Evaluation & instrumentation
 
@@ -276,13 +248,30 @@ for thesis-baseline runs where we want determinism.
 
 ### Phase 3 — Hybrid routing
 
-- The router is set up for this (`co_schedule_v0` profile routes
-  researcher + final_report to cloud). But the **cloud endpoint isn't
-  configured live** — sjtu vLLM serving is still on the operator's
-  todo. No measurements have been taken.
-- The "local minimizer/personalizer" role hasn't actually been used
-  as a privacy-minimizer in any code path — it's just another endpoint
-  the router can pick.
+The Phase-4 router **seam** is set up: `Router.select(profile, role,
+envelope, hint)` is wired into every LangGraph LLM call. The router
+**body** ignores `envelope` and `hint` (router.py:45
+`_ = envelope, hint`) and dispatches purely by `(profile, role)` — so
+"set up for this" means "the signature is right and the wiring is
+complete"; ParetoDispatch itself is Phase 4 work.
+
+`co_schedule_v0` is defined in `config/config.example.yaml`
+(researcher + final_report → cloud) but `config.local.yaml` still
+uses legacy STORM keys (the example file is the authoritative
+Phase-1.5 mapping). The **cloud endpoint isn't configured live** —
+sjtu vLLM serving is still on the operator's todo. No measurements
+have been taken.
+
+The "local minimizer/personalizer" role hasn't actually been used
+as a privacy-minimizer in any code path — it's just another endpoint
+the router can pick.
+
+**Phase-3.5 experiment** (decided 2026-05-12, was §6.B proposal 2):
+once sjtu vLLM is live, add a model profile that routes `supervisor`
+to the cloud 70B while keeping `compressor` + `reflector` local.
+Compare structured-output stability and end-to-end latency against
+`phase1_default` (everything-local) and `co_schedule_v0`
+(researcher + final_report cloud). Config-only; no new code.
 
 ### Phase 4 — Privacy-bounded ParetoDispatch
 
@@ -292,7 +281,7 @@ are attached anywhere. No leakage proxies. No multi-objective
 optimization.
 
 **This is the actual thesis contribution** and is the next major
-chunk of work.
+chunk of work, gated on the design decisions in §7.
 
 ### Phase 5 — Reflection Broadcast + hierarchical memory
 
@@ -308,12 +297,14 @@ Not started.
 
 ---
 
-## 8. Gaps in the Original Plan vs. the Thesis Aim
+## 7. Gaps in the Original Plan vs. the Thesis Aim
 
-These are honest critiques of where the original phased plan would
-need to be sharpened to actually fulfill the 3-D Pareto frontier aim.
+These are honest critiques of where the original phased plan needs to
+be sharpened to actually fulfill the 3-D Pareto frontier aim. They are
+research-design questions, not engineering — every Phase-4/5/6 item in
+§6 above depends on these being settled first.
 
-### 8.1 Pareto frontier sweep design is missing
+### 7.1 Pareto frontier sweep design is missing
 
 A Pareto frontier across (latency, privacy-leakage, joint GPU
 utilization) requires **multiple operating points**. The plan lists
@@ -329,7 +320,7 @@ the metrics but never specifies:
 
 Without a sweep design, "Pareto frontier" is rhetoric, not an artifact.
 
-### 8.2 PD-disaggregation stream is barely engaged
+### 7.2 PD-disaggregation stream is barely engaged
 
 DistServe, Llumnix, Mooncake, Parrot, ECO-LLM all operate **inside a
 serving system** (prefill/decode disaggregation, batch coalescing,
@@ -348,7 +339,7 @@ needs to either:
 
 Right now (1) is the de-facto position but the plan reads like (2)/(3).
 
-### 8.3 Contextual-integrity labels need an actual classifier
+### 7.3 Contextual-integrity labels need an actual classifier
 
 The plan says "add CI labels: subject, sender, recipient, attribute
 type, transmission principle, sensitivity" without saying *who
@@ -366,7 +357,7 @@ Phase 4 starts before Phase 6, so the classifier path is the default.
 The latency cost of CI checks needs to be in the Pareto budget itself,
 which the plan doesn't yet acknowledge.
 
-### 8.4 Mutual-information "budget proxy" is undefined
+### 7.4 Mutual-information "budget proxy" is undefined
 
 The plan mentions a mutual-information budget but doesn't define
 the proxy. Real MI estimation between (private prefs) and (cloud-visible
@@ -382,7 +373,7 @@ The thesis needs to pick one surrogate and defend it. Recommendation:
 bounded above by a knob. Calling this "MI" is a stretch — call it
 what it is: a leakage proxy.
 
-### 8.5 Reflection Broadcast — operationally undefined
+### 7.5 Reflection Broadcast — operationally undefined
 
 When does broadcast fire? On every reflection? Once per session? On
 high-quality reflections only? How does it propagate — by
@@ -392,7 +383,7 @@ shared store? Streaming via a side channel?
 The plan needs a concrete protocol diagram. Otherwise the contribution
 is a name, not a mechanism.
 
-### 8.6 Hierarchical memory placement policy is unspecified
+### 7.6 Hierarchical memory placement policy is unspecified
 
 The plan lists the inputs ("recency, utility, sensitivity, retrieval
 frequency, expected token savings") but not the function. Realistic
@@ -404,7 +395,7 @@ options:
 
 Pick one. Each has different evaluation requirements.
 
-### 8.7 BrowseComp-Hybrid construction methodology is missing
+### 7.7 BrowseComp-Hybrid construction methodology is missing
 
 "Each task includes: research question, private preference or
 constraint, public web component, expected evidence requirements,
@@ -421,7 +412,7 @@ needs to either descope to "use BrowseComp + add private preferences
 manually for 10 tasks" or commit a compute budget to synthesis +
 review.
 
-### 8.8 No baseline comparison
+### 7.8 No baseline comparison
 
 Pareto curves are only useful relative to a baseline. The plan
 doesn't specify what we're comparing against. Candidates:
@@ -436,14 +427,14 @@ doesn't specify what we're comparing against. Candidates:
 
 Pick three. Without them the frontier story has no contrast.
 
-### 8.9 Eval cost / compute budget is unspecified
+### 7.9 Eval cost / compute budget is unspecified
 
 Running BrowseComp-style evaluations against frontier models is
 expensive. With 10–20 tasks × multiple ablations × multiple seeds ×
 LLM-as-judge scoring, you're easily into the \$50–\$500/run range.
 The plan doesn't budget for this.
 
-### 8.10 The user / personalization model is shallow
+### 7.10 The user / personalization model is shallow
 
 The "minimizer/personalizer" gets named in the aim but never
 elaborated. Realistic minimization needs at least:
@@ -458,41 +449,80 @@ ReMe's `personal` memory type is a vehicle; the minimization
 
 ---
 
-## 9. Recommended Immediate Next Steps
+## 8. Recommended Immediate Next Steps
 
-In priority order, smallest-blocking-thing first:
+The bug-fix sweep landed 2026-05-12 closed out everything in the
+previous §6 ("Known Problems / Open Questions") plus a latent bug in
+state propagation. The pipeline now runs end-to-end through both the
+CLI and Studio paths. The forward agenda is:
 
-1. **`scripts/studio_e2e.py` debug harness** (problem A) — unblocks
-   the rest. Single afternoon of work.
-2. **Patch 5–style fallbacks at supervisor + researcher** (problem B)
-   — keeps the local-only pipeline stable.
-3. **OpenAI embedding endpoint for ReMe** (problem C) — flip a config
-   field, set `REME_EMBEDDING_API_BASE`. Five minutes.
-4. **Wire `TraceCallbackHandler` into the Studio bootstrap** (problem D).
-5. **Define the Pareto sweep design** (gap 8.1) before writing more
-   code — committing a sweep design forces the rest of the design
-   questions (gaps 8.3, 8.4, 8.8, 8.9) onto the page.
-6. **Sjtu vLLM cloud endpoint** — already in the operator todo. Once
-   live, run `co_schedule_v0` end-to-end and start collecting
-   latency / token-cost / GPU-utilization numbers.
+### Track A — Sjtu cloud endpoint (blocks Phase 3 measurement)
 
-Phase 4 (ParetoDispatch) lands after step 5 — the sweep design tells
-us what the dispatcher needs to optimize for and what counts as a
-working Phase-4.
+1. Finish the Qwen3.6-35B-A3B-FP8 / Llama-3.3-70B-AWQ download on sjtu
+   (already in operator todo).
+2. `bash scripts/serve_cloud.sh` on sjtu + `bash scripts/tunnel_sjtu.sh`
+   locally.
+3. Smoke `co_schedule_v0` end-to-end: confirm cloud endpoint hits in
+   the routing trace and the supervisor's structured outputs survive
+   on the 70B.
+4. Run the Phase-3.5 experiment (route `supervisor` to cloud) for the
+   stability comparison.
+
+### Track B — Phase 2 instrumentation (parallel with Track A)
+
+1. Expand `eval/runner.py` to ablate model_profile × memory_profile ×
+   search_on/off with per-cell latency + token + citation counts.
+2. Add NVML/DCGM polling worker; populate `SchedulingHint` with live
+   utilization samples for future Phase-4 use.
+3. Add a bytes-to-cloud counter on each remote `ModelClient.complete`.
+
+### Track C — Phase 4 design (must precede Phase 4 code)
+
+The §7 gaps are gating questions. In priority order:
+
+1. **§7.1** Define the Pareto sweep design — this forces commitment on
+   §7.3, §7.4, §7.8, §7.9.
+2. **§7.4** Pick the leakage-proxy surrogate (recommended:
+   sensitive-token + entity exposure counts).
+3. **§7.3** Pick the CI-label source (recommended: a small classifier
+   on the minimizer endpoint, counted as a cost in the latency axis).
+4. **§7.10** Specify the minimizer / personalization function.
+
+Once §7.1 / §7.3 / §7.4 / §7.10 are settled, implement the new
+`Router.select` body in `models/router.py` and the `scheduling/`
+package contents.
+
+### Track D — Phase 5 + 6 (research questions still open)
+
+Phase 5 (Reflection Broadcast, hierarchical memory) and Phase 6
+(BrowseComp-Hybrid) are downstream of Tracks A–C; their gating §7
+items (§7.5, §7.6, §7.7) need design decisions, not code, as the
+next move.
 
 ---
 
-## 10. Files Worth Re-reading
+## 9. Files Worth Re-reading
 
 - `/home/lyc/.claude/plans/i-made-a-dapper-quasar.md` — the original
   Phase 1.5 migration plan.
+- `/home/lyc/.claude/plans/1-read-docs-status-md-2-luminous-toucan.md`
+  — the audit / refine plan that produced the bug-fix sweep landed
+  2026-05-12 (afternoon).
 - `src/deepresearch/agents/langgraph/upstream/UPSTREAM_NOTE.md` —
-  vendored-code patch list (5 patches as of today).
+  vendored-code patch list (7 patches as of today).
 - `src/deepresearch/agents/langgraph/runtime.py` — the canonical
   entrypoint that exercises the full pipeline with memory + tracing.
-- `src/deepresearch/agents/langgraph/studio.py` — the Studio
-  variant; the source of most of the open issues.
+- `src/deepresearch/agents/langgraph/studio.py` — the Studio variant;
+  studio_bootstrap + reflector_writer_node mirror runtime's effects.
+- `src/deepresearch/agents/langgraph/state.py` — our `AgentState`
+  extension that declares the `reflection` key.
+- `src/deepresearch/agents/langgraph/callbacks.py` — the
+  `TraceCallbackHandler` + `SeqAllocator`.
+- `src/deepresearch/agents/langgraph/reflection_node.py` — our
+  injected reflector that emits `ReflectionUpdate`.
+- `src/deepresearch/agents/langgraph/router_chat_model.py` — the
+  `RouterChatModel` + `RouterConfigurableModel` + active-run slot.
 - `src/deepresearch/models/router.py` — the Phase-4 seam.
   Signature is sacred; body is profile-only today.
-- `scripts/demo_e2e.py` — hermetic e2e, the cleanest existence proof
-  that the architecture works.
+- `scripts/demo_e2e.py` — hermetic e2e against a fake client.
+- `scripts/studio_e2e.py` — hermetic + live e2e for the Studio path.

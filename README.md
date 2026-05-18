@@ -83,6 +83,24 @@ uv run deepresearch run \
 uv run uvicorn deepresearch.api.app:create_app --factory --port 8765
 ```
 
+### ReMe embedding endpoint
+
+ReMe summary flows require an OpenAI-compatible `/v1/embeddings` endpoint.
+A vLLM server hosting a causal LM (Qwen3-8B-AWQ etc.) and DeepSeek's chat
+API both lack this endpoint, so set the embedding endpoint separately in
+`.env`:
+
+```bash
+REME_EMBEDDING_API_BASE=https://api.openai.com/v1
+REME_EMBEDDING_API_KEY=$OPENAI_API_KEY
+```
+
+with `memory.reme.embedding.model_id: text-embedding-3-small` in
+`config.local.yaml`. Cost is ~$0.02 / 1M tokens. If unset, the adapter
+falls back to the LLM endpoint and ReMe writes will fail-soft at the
+embedding step (reads still work for memories written via a properly
+configured pass).
+
 ## Layout
 
 ```

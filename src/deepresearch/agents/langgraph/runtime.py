@@ -46,6 +46,7 @@ from deepresearch.agents.langgraph.memory_hooks import (
 from deepresearch.agents.langgraph.reflection_node import reflector_node
 from deepresearch.agents.langgraph.role_map import CONFIG_FIELD_TO_ROLE
 from deepresearch.agents.langgraph.router_chat_model import active_run_context
+from deepresearch.agents.langgraph.state import AgentState
 from deepresearch.agents.langgraph.upstream.configuration import Configuration, SearchAPI
 from deepresearch.agents.langgraph.upstream.deep_researcher import (
     clarify_with_user,
@@ -55,7 +56,6 @@ from deepresearch.agents.langgraph.upstream.deep_researcher import (
 )
 from deepresearch.agents.langgraph.upstream.state import (
     AgentInputState,
-    AgentState,
 )
 from deepresearch.config.schema import MemoryProfileConfig
 from deepresearch.memory.profiles import MemoryProfile
@@ -80,7 +80,7 @@ def _build_graph() -> Any:
     handle their own ReAct loops), and appends our reflector node
     between `final_report_generation` and `END`.
     """
-    g = StateGraph(AgentState, input=AgentInputState, config_schema=Configuration)
+    g = StateGraph(AgentState, input_schema=AgentInputState, context_schema=Configuration)
     g.add_node("clarify_with_user", clarify_with_user)
     g.add_node("write_research_brief", write_research_brief)
     g.add_node("research_supervisor", supervisor_subgraph)
@@ -117,10 +117,15 @@ def _build_configurable(req: RunRequest) -> dict[str, Any]:
         "compression_model": CONFIG_FIELD_TO_ROLE["compression_model"],
         "compression_model_max_tokens": 1200,
         "final_report_model": CONFIG_FIELD_TO_ROLE["final_report_model"],
+        # 1500 fits inside Qwen3-8B-AWQ's 4096 context with room for the
+        # prompt + findings. For reasoning models (DeepSeek v4-pro etc.)
+        # that consume part of the output budget on `reasoning_content`,
+        # `ModelClient.complete` falls back to reasoning_content when
+        # `content` ends up empty so the report still has substance.
         "final_report_model_max_tokens": 1500,
         # Pipeline behavior.
         "allow_clarification": False,
-        "max_concurrent_research_units": 2,
+        "max_concurrent_research_units": req.max_concurrent_units,
         "max_researcher_iterations": min(req.max_searches, 3),
         "max_react_tool_calls": min(req.max_searches, 4),
         "max_structured_output_retries": 2,

@@ -209,6 +209,24 @@ class RouterChatModel(BaseChatModel):
             envelope=self.envelope,
             hint=None,
         )
+        # Studio path injects memory primes here. The Studio graph's
+        # add_messages reducer can't cleanly prepend system messages to
+        # the initial state from a bootstrap node, so we prepend at the
+        # model boundary instead. Costs a few hundred prompt tokens per
+        # call but matches the runtime path's effect.
+        active = _studio_active_run
+        prime_msgs: list[BaseMessage] = (
+            getattr(active, "prime_msgs", None) or []
+            if active is not None
+            else []
+        )
+        if prime_msgs:
+            already_primed = any(
+                isinstance(m, SystemMessage) and getattr(m, "content", "") in {pm.content for pm in prime_msgs}
+                for m in messages
+            )
+            if not already_primed:
+                messages = list(prime_msgs) + list(messages)
         oai_messages = _messages_to_openai(messages)
 
         complete_kwargs: dict[str, Any] = {

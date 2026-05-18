@@ -29,6 +29,9 @@ handled:
 ## Patches applied
 
 Each item below records one local edit on top of the pinned source.
+Numbers reflect creation order, not file order — Patch 5 predates
+Patch 4, and Patches 6/7 were added together after the Patch-5
+follow-on review.
 
 ### Patch 1: import-prefix rewrite (mechanical)
 - Files affected: `deep_researcher.py`, `utils.py`
@@ -77,6 +80,36 @@ Each item below records one local edit on top of the pinned source.
 - Reason: keep Tavily's per-page summarization on the Router seam too.
   This path only fires when `search_api == TAVILY`; the Phase-1.5
   smoke gate runs with `search_api == NONE` so this patch is dormant.
+
+### Patch 6: propagate non-token-limit exceptions in `supervisor_tools`
+- Files affected: `deep_researcher.py`
+- Change: in the `except Exception as e:` block of `supervisor_tools`,
+  removed the unconditional `or True` from
+  `if is_token_limit_exceeded(e, configurable.research_model) or True:`
+  and added `raise` after the token-limit branch. The token-limit case
+  still exits gracefully to END; every other exception bubbles up.
+- Reason: upstream swallowed every failure to `goto=END` regardless of
+  cause, which hid transient ReMe/SQLite/network errors as if they were
+  token-limit overflows. For thesis-grade metrics we want the trace to
+  show the real failure: non-token-limit exceptions propagate to
+  `runtime.run_research`, which logs `run_failed` and persists the error
+  on the `ResearchRun.error` column.
+
+### Patch 7: defensive None/empty response fallback in supervisor + researcher
+- Files affected: `deep_researcher.py`
+- Change: after `response = await research_model.ainvoke(...)` in both
+  the `supervisor` node and the `researcher` node, check whether
+  `response` is None or carries neither tool_calls nor non-empty content.
+  If so, replace it with an `AIMessage` whose only tool call is a
+  synthesized `ResearchComplete` (with id `synth_research_complete` so
+  the synthetic origin is visible in the trace).
+- Reason: small local models (Qwen3-8B-AWQ class, similar) occasionally
+  exhaust `max_structured_output_retries` and return None or an empty
+  AIMessage. Downstream code reads `most_recent_message.tool_calls`; a
+  None response would crash with `AttributeError`, and an empty response
+  in the researcher would silently loop until `MAX_REACT_TOOL_CALLS`.
+  Synthesizing a deterministic `ResearchComplete` makes the failure
+  mode appear as an intentional, visible exit instead.
 
 ## Re-sync procedure
 

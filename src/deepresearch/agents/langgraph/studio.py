@@ -1,3 +1,7 @@
+# ruff: noqa: E402 — the `os.environ.setdefault(...)` block intentionally
+# precedes the langchain/langgraph imports so any env-driven defaults in
+# upstream `Configuration.from_runnable_config` are in place by the time
+# the graph is compiled at module load.
 """LangGraph Studio entry point.
 
 Upstream `open_deep_research` exposes its compiled `deep_researcher`
@@ -6,17 +10,21 @@ Studio web UI. Our `runtime.run_research` wraps the same graph with
 contextvar setup + memory priming + reflection writes, which makes it
 unsuitable for Studio's "just hand me a compiled graph" API.
 
-This module exposes a `studio_graph` that adds a single bootstrap node
-at the front of the pipeline:
+This module exposes a `studio_graph` that mirrors `runtime.run_research`
+for the Studio path:
 
-1. Lazy-init `RunDependencies` once per process (real config, real
-   SQLite, real Qdrant embedded, real ModelClient pointing at the
-   endpoints you configured in `config/config.local.yaml`).
-2. Allocate a `ResearchRun` row.
-3. Set the `active_run_context` contextvar — without `reset()`, so the
-   value propagates to every downstream node in this asyncio task.
-
-Then the standard upstream nodes run, followed by our `reflector`.
+1. `studio_bootstrap` lazy-builds `RunDependencies` once per process,
+   allocates a `ResearchRun`, primes personal/task/tool/working memory
+   into a system message, builds a `TraceCallbackHandler` + `SeqAllocator`,
+   binds the module-level Studio active-run slot, and tries to attach
+   the callback into the local `RunnableConfig` so Pregel propagates it
+   to siblings.
+2. Standard upstream nodes (clarify, brief, supervisor) run; every LLM
+   call resolves to our `RouterChatModel` via the active-run slot.
+3. The new `reflector_writer_node` runs `reflector_node`'s reflection,
+   then writes both the reflection and the final report through
+   `MemoryService.write` — Studio sessions become first-class for
+   thesis data collection.
 
 Run with:
 
@@ -34,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -60,18 +69,36 @@ for k, v in (
     ("MAX_STRUCTURED_OUTPUT_RETRIES", "2"),
     ("MAX_CONTENT_LENGTH", "8000"),
     ("SEARCH_API", "none"),
+    # Cap per-call output budgets so requests fit inside the local
+    # 8B-AWQ model's 4096-token context. Upstream defaults are 10000,
+    # which vLLM rejects with HTTP 400. ModelClient falls back to
+    # `reasoning_content` when reasoning models burn the budget.
+    ("RESEARCH_MODEL_MAX_TOKENS", "1500"),
+    ("SUMMARIZATION_MODEL_MAX_TOKENS", "800"),
+    ("COMPRESSION_MODEL_MAX_TOKENS", "1200"),
+    ("FINAL_REPORT_MODEL_MAX_TOKENS", "1500"),
 ):
     os.environ.setdefault(k, v)
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from deepresearch.agents.context import RunDependencies
+from deepresearch.agents.langgraph.callbacks import (
+    SeqAllocator,
+    TraceCallbackHandler,
+)
+from deepresearch.agents.langgraph.memory_hooks import (
+    prime_brief_messages,
+    write_reflection,
+    write_working_report,
+)
 from deepresearch.agents.langgraph.reflection_node import reflector_node
 from deepresearch.agents.langgraph.router_chat_model import (
     _ActiveRun,
     set_studio_active_run,
 )
+from deepresearch.agents.langgraph.state import AgentState
 from deepresearch.agents.langgraph.upstream.configuration import (
     Configuration,
 )
@@ -83,10 +110,12 @@ from deepresearch.agents.langgraph.upstream.deep_researcher import (
 )
 from deepresearch.agents.langgraph.upstream.state import (
     AgentInputState,
-    AgentState,
 )
 from deepresearch.api.deps import build_dependencies
 from deepresearch.config.loader import get_config
+from deepresearch.config.schema import MemoryProfileConfig
+from deepresearch.memory.profiles import MemoryProfile
+from deepresearch.schemas.agents import AgentRole, AgentStep, ReflectionUpdate, StepStatus
 from deepresearch.schemas.runs import ResearchRun, RunRequest, RunStatus
 
 log = structlog.get_logger(__name__)
@@ -126,8 +155,22 @@ def _query_from_state(state: dict[str, Any]) -> str:
     return ""
 
 
+def _resolve_memory_profile(deps: RunDependencies, name: str) -> MemoryProfile:
+    profiles = deps.config.memory.profiles
+    if name not in profiles:
+        return MemoryProfile.from_config(name, MemoryProfileConfig())
+    return MemoryProfile.from_config(name, profiles[name])
+
+
 async def studio_bootstrap(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
-    """First-node setup: build deps, allocate run, bind contextvar."""
+    """First-node setup: deps, run row, memory priming, trace callback.
+
+    Mirrors `runtime.run_research`'s setup for the Studio path. After
+    this node returns, every downstream LLM call resolves through the
+    `_ActiveRun` slot (which now also carries the trace callback
+    handler) and the primed system message is prepended onto messages
+    fed to RouterChatModel by the upstream nodes.
+    """
     deps = await _get_deps()
 
     query = _query_from_state(state) or "(empty query)"
@@ -141,6 +184,7 @@ async def studio_bootstrap(state: AgentState, config: RunnableConfig) -> dict[st
         model_profile=str(cfg_data.get("model_profile") or "phase1_default"),
         memory_profile=str(cfg_data.get("memory_profile") or "default"),
         max_searches=int(cfg_data.get("max_searches") or 3),
+        max_concurrent_units=int(cfg_data.get("max_concurrent_units") or 2),
     )
 
     run = ResearchRun(request=req, status=RunStatus.running)
@@ -151,13 +195,185 @@ async def studio_bootstrap(state: AgentState, config: RunnableConfig) -> dict[st
     except Exception as e:  # pragma: no cover - studio resilience
         log.warning("studio_run_persist_failed", error=repr(e))
 
-    # LangGraph's Pregel runs each node in a fresh asyncio Task, so
-    # contextvars set here would NOT propagate to clarify_with_user
-    # next. Use the module-level Studio slot instead — single-tenant
-    # but adequate for the `langgraph dev` use case.
-    set_studio_active_run(_ActiveRun(deps=deps, request=req, run_id=run.id))
+    # Build the trace machinery up-front so RouterChatModel calls (and
+    # the bootstrap step itself) all land on a single seq sequence.
+    seq_alloc = SeqAllocator()
+    cb = TraceCallbackHandler(
+        recorder=deps.recorder,
+        run_id=run.id,
+        seq_alloc=seq_alloc,
+    )
 
+    # Best-effort: prime personal/task/tool/working memory. If the memory
+    # layer is mid-init or read fails, log and continue with no primes.
+    mem_profile = _resolve_memory_profile(deps, req.memory_profile)
+    prime_msgs: list[SystemMessage] = []
+    primes: dict[Any, list[Any]] = {}
+    try:
+        prime_msgs, primes = await prime_brief_messages(
+            deps=deps, request=req, run_id=run.id, profile=mem_profile
+        )
+    except Exception as e:  # pragma: no cover - studio resilience
+        log.warning("studio_prime_failed", error=repr(e))
+
+    set_studio_active_run(
+        _ActiveRun(deps=deps, request=req, run_id=run.id)
+    )
+    # Stash callback + primes alongside the active run so the materialized
+    # RouterChatModel can pick them up. `_ActiveRun` is a tiny dataclass;
+    # we add the runtime-only attributes here without expanding its
+    # schema so non-Studio callers stay unaffected.
+    from deepresearch.agents.langgraph import router_chat_model as _rcm
+
+    active = _rcm._studio_active_run
+    if active is not None:
+        active.callback_handler = cb  # type: ignore[attr-defined]
+        active.seq_alloc = seq_alloc  # type: ignore[attr-defined]
+        active.primes = primes  # type: ignore[attr-defined]
+        active.prime_msgs = list(prime_msgs)  # type: ignore[attr-defined]
+        active.memory_profile = mem_profile  # type: ignore[attr-defined]
+        active.t0 = time.perf_counter()  # type: ignore[attr-defined]
+
+    # Attach the callback into the live RunnableConfig so downstream
+    # nodes' LangChain callbacks fire chain_start/chain_end into our
+    # recorder. Pregel propagates the parent config to child nodes;
+    # mutating the callbacks list reaches subsequent nodes in this
+    # invocation.
+    if isinstance(config, dict):
+        cbs = config.setdefault("callbacks", [])
+        if isinstance(cbs, list) and cb not in cbs:
+            cbs.append(cb)
+
+    # Record a bootstrap step so the SQLite trace has a clear "studio
+    # run started" marker even if downstream chain callbacks don't fire.
+    try:
+        deps.recorder.record_step(
+            AgentStep(
+                run_id=run.id,
+                seq=seq_alloc.next(),
+                role=AgentRole.planner,
+                status=StepStatus.ok,
+                input={"node": "studio_bootstrap", "query": query},
+                output={
+                    "n_primes": sum(len(v) for v in primes.values()),
+                    "model_profile": req.model_profile,
+                    "memory_profile": req.memory_profile,
+                },
+                started_at=run.started_at or datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+                latency_ms=0,
+            )
+        )
+    except Exception as e:  # pragma: no cover - never crash studio
+        log.warning("studio_bootstrap_trace_failed", error=repr(e))
+
+    # Studio's add_messages reducer appends rather than prepends, so we
+    # can't cleanly inject the prime SystemMessages at position 0 from
+    # here. Instead the materialized RouterChatModel reads
+    # `_ActiveRun.prime_msgs` and prepends the primed context onto every
+    # LLM call's messages. Costs a few hundred prompt tokens per call
+    # but matches the runtime path's effect at the model layer.
     return {}
+
+
+async def reflector_writer_node(
+    state: AgentState, config: RunnableConfig
+) -> dict[str, Any]:
+    """Run reflector + write reflection / report into ReMe + working memory.
+
+    Replaces the bare `reflector_node` in the Studio graph: we still
+    emit the same `ReflectionUpdate` into state (so the Studio UI can
+    inspect it) but additionally persist it via `MemoryService.write`
+    the same way `runtime.run_research` does after a CLI run.
+    """
+    # Step 1: run the standard reflector to populate state["reflection"].
+    result = await reflector_node(state, config)
+
+    # Step 2: dispatch the writes. Read the active-run slot to find
+    # deps + run_id. If the slot is empty (e.g., reflector triggered
+    # outside Studio), no-op the writes.
+    from deepresearch.agents.langgraph import router_chat_model as _rcm
+
+    active = _rcm._studio_active_run
+    if active is None:
+        return result
+
+    deps = active.deps
+    req = active.request
+    run_id = active.run_id
+
+    reflection_dict = result.get("reflection") or {}
+    reflection = (
+        ReflectionUpdate(**reflection_dict)
+        if isinstance(reflection_dict, dict)
+        else ReflectionUpdate()
+    )
+    final_report = (state.get("final_report") or "").strip()
+
+    try:
+        n_writes = await write_reflection(
+            deps=deps, run_id=run_id, request=req, reflection=reflection
+        )
+    except Exception as e:  # pragma: no cover - studio resilience
+        log.warning("studio_write_reflection_failed", error=repr(e))
+        n_writes = 0
+
+    if final_report:
+        try:
+            await write_working_report(
+                deps=deps, run_id=run_id, request=req, report=final_report
+            )
+            n_writes += 1
+        except Exception as e:  # pragma: no cover - studio resilience
+            log.warning("studio_write_report_failed", error=repr(e))
+
+    # Final marker step + finalize the run row so studio sessions appear
+    # in `data/runs.db` as `done` rather than stuck `running`.
+    seq_alloc = getattr(active, "seq_alloc", None)
+    started_at = getattr(active, "t0", None)
+    latency_ms = int((time.perf_counter() - started_at) * 1000) if started_at else 0
+    try:
+        if seq_alloc is not None:
+            deps.recorder.record_step(
+                AgentStep(
+                    run_id=run_id,
+                    seq=seq_alloc.next(),
+                    role=AgentRole.reflector,
+                    status=StepStatus.ok,
+                    input={"node": "reflector_writer"},
+                    output={
+                        "n_writes": n_writes,
+                        "report_chars": len(final_report),
+                    },
+                    started_at=datetime.now(UTC),
+                    finished_at=datetime.now(UTC),
+                    latency_ms=0,
+                )
+            )
+        # Mark the run done. ResearchRun.report_md is set so future
+        # primed runs can retrieve via working memory.
+        try:
+            from deepresearch.schemas.runs import RunMetrics
+
+            done_run = ResearchRun(
+                id=run_id,
+                request=req,
+                status=RunStatus.done,
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+                report_md=final_report or None,
+                metrics=RunMetrics(
+                    total_latency_ms=latency_ms,
+                    n_memory_writes=n_writes,
+                ),
+            )
+            deps.repos.runs.mark_done(done_run)
+        except Exception as e:  # pragma: no cover
+            log.warning("studio_run_mark_done_failed", error=repr(e))
+    except Exception as e:  # pragma: no cover - never crash studio
+        log.warning("studio_finalize_trace_failed", error=repr(e))
+
+    return result
 
 
 def _build_studio_graph() -> Any:
@@ -167,7 +383,7 @@ def _build_studio_graph() -> Any:
     g.add_node("write_research_brief", write_research_brief)
     g.add_node("research_supervisor", supervisor_subgraph)
     g.add_node("final_report_generation", final_report_generation)
-    g.add_node("reflector", reflector_node)
+    g.add_node("reflector", reflector_writer_node)
 
     g.add_edge(START, "studio_bootstrap")
     g.add_edge("studio_bootstrap", "clarify_with_user")
@@ -183,4 +399,4 @@ def _build_studio_graph() -> Any:
 studio_graph = _build_studio_graph()
 
 
-__all__ = ["studio_bootstrap", "studio_graph"]
+__all__ = ["reflector_writer_node", "studio_bootstrap", "studio_graph"]
