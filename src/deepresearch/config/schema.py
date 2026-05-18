@@ -81,7 +81,9 @@ class WorkingMemoryConfig(BaseModel):
     local_path: str | None = "./data/qdrant_working"
     qdrant_url: str = "http://localhost:6333"
     collection_template: str = "dr_working_{user}_{project}"
-    embedding_model: str = "bge-m3"
+    # `hash-fallback` for semantic-blind tests; any sentence-transformers
+    # model_id for real embeddings (default: BAAI/bge-small-en-v1.5).
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
 
 
 class MemoryProfileConfig(BaseModel):

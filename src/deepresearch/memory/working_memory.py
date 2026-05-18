@@ -4,17 +4,25 @@ ReMe does not have a native "working" memory type, so we own this tier
 ourselves. Phase 5's hot/warm/cold placement will wrap this and the ReMe
 adapter behind a common policy.
 
-Phase 1 embedding strategy: ask the local OpenAI-compatible endpoint for
-embeddings via `/v1/embeddings`. If that fails (the local 20B may not serve
-embeddings), fall back to a deterministic random-but-stable hash embedding
-so the rest of the loop keeps moving. This is good enough for the smoke
-gate; Phase 2 swaps in a real embedding model.
+Embedding strategy:
+- `embedding_model == "hash-fallback"`: deterministic SHA-256-derived
+  vector. Semantic-blind, useful only for hermetic tests where we don't
+  care about retrieval quality.
+- otherwise: `sentence_transformers.SentenceTransformer(model_id,
+  device="cpu")`. The default in `config.example.yaml` is
+  `BAAI/bge-small-en-v1.5` (~140 MB, 384-dim) — small enough to run on
+  CPU without latency surprises, large enough to support real
+  retrieval.
+
+The collection's vector size is set to match the embedder on first
+write. Switching models mid-run requires deleting the on-disk Qdrant
+collection (the dim won't match).
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,22 +35,73 @@ from deepresearch.schemas.memory import MemoryRecord, MemoryType
 
 log = structlog.get_logger(__name__)
 
-_VECTOR_SIZE = 768
+_HASH_VECTOR_SIZE = 384  # match bge-small-en-v1.5 so swapping models
+# between hash-fallback and the real model uses the same collection
+# dim — avoids a Qdrant mismatch the first time a dev switches over.
 
 
-def _hash_embedding(text: str, size: int = _VECTOR_SIZE) -> list[float]:
-    """Deterministic fallback embedding. Hashes are NOT a substitute for
-    semantic embeddings; this exists only so Phase-1 smoke tests pass
-    without a live embedding endpoint."""
+def _hash_embedding(text: str, size: int = _HASH_VECTOR_SIZE) -> list[float]:
+    """Deterministic fallback embedding. NOT a substitute for a real
+    semantic encoder — used only when `embedding_model == "hash-fallback"`
+    for hermetic tests."""
     h = hashlib.sha256(text.encode("utf-8")).digest()
     raw = (h * ((size // len(h)) + 1))[:size]
     return [(b - 128) / 128.0 for b in raw]
 
 
 @dataclass
+class _Embedder:
+    """Lazy-loaded encoder. The sentence-transformers model is only
+    loaded on first non-hash use, so test runs that stick to
+    `hash-fallback` never pull torch into memory."""
+
+    model_id: str
+    _dim: int | None = field(default=None, init=False, repr=False)
+    _model: Any = field(default=None, init=False, repr=False)
+
+    @property
+    def dim(self) -> int:
+        if self._dim is None:
+            if self.model_id == "hash-fallback":
+                self._dim = _HASH_VECTOR_SIZE
+            else:
+                self._ensure_loaded()
+        return int(self._dim or 0)
+
+    def _ensure_loaded(self) -> None:
+        if self.model_id == "hash-fallback" or self._model is not None:
+            return
+        # Imported lazily so the dependency only impacts processes that
+        # actually exercise it (tests on hash-fallback skip the import).
+        from sentence_transformers import SentenceTransformer
+
+        self._model = SentenceTransformer(self.model_id, device="cpu")
+        # sentence-transformers >=5.0 renamed get_sentence_embedding_dimension
+        # → get_embedding_dimension. Support both.
+        dim_fn = getattr(
+            self._model, "get_embedding_dimension", None
+        ) or self._model.get_sentence_embedding_dimension
+        self._dim = int(dim_fn())
+        log.info(
+            "working_memory_encoder_loaded",
+            model_id=self.model_id,
+            dim=self._dim,
+        )
+
+    def encode(self, text: str) -> list[float]:
+        if self.model_id == "hash-fallback":
+            return _hash_embedding(text, _HASH_VECTOR_SIZE)
+        self._ensure_loaded()
+        assert self._model is not None
+        vec = self._model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+        return [float(x) for x in vec.tolist()]
+
+
+@dataclass
 class WorkingMemory:
     cfg: WorkingMemoryConfig
     client: AsyncQdrantClient
+    embedder: _Embedder
 
     @classmethod
     async def create(cls, cfg: WorkingMemoryConfig) -> WorkingMemory:
@@ -53,7 +112,8 @@ class WorkingMemory:
         else:
             client = AsyncQdrantClient(url=cfg.qdrant_url)
             log.info("working_memory_server_mode", url=cfg.qdrant_url)
-        return cls(cfg=cfg, client=client)
+        embedder = _Embedder(cfg.embedding_model)
+        return cls(cfg=cfg, client=client, embedder=embedder)
 
     def _collection(self, user_id: str, project_id: str) -> str:
         return self.cfg.collection_template.format(user=user_id, project=project_id).replace(
@@ -66,7 +126,9 @@ class WorkingMemory:
         except Exception:
             await self.client.create_collection(
                 collection_name=name,
-                vectors_config=qmodels.VectorParams(size=_VECTOR_SIZE, distance=qmodels.Distance.COSINE),
+                vectors_config=qmodels.VectorParams(
+                    size=self.embedder.dim, distance=qmodels.Distance.COSINE
+                ),
             )
 
     async def write(
@@ -79,7 +141,7 @@ class WorkingMemory:
     ) -> MemoryRecord:
         col = self._collection(user_id, project_id)
         await self._ensure_collection(col)
-        vec = _hash_embedding(content)
+        vec = self.embedder.encode(content)
         point_id = hashlib.sha1(f"{user_id}|{project_id}|{content}".encode()).hexdigest()[:16]
         # qdrant requires int or uuid; use stable int from hash
         pid = int(point_id, 16) & ((1 << 63) - 1)
@@ -116,7 +178,7 @@ class WorkingMemory:
         col = self._collection(user_id, project_id)
         try:
             await self._ensure_collection(col)
-            vec = _hash_embedding(query)
+            vec = self.embedder.encode(query)
             resp = await self.client.query_points(
                 collection_name=col, query=vec, limit=top_k
             )

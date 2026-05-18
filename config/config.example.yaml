@@ -58,7 +58,10 @@ memory:
     local_path: ./data/qdrant_working
     qdrant_url: http://localhost:6333
     collection_template: "dr_working_{user}_{project}"
-    embedding_model: bge-m3
+    # Working-memory encoder. CPU sentence-transformers; ~140 MB
+    # download on first use, 384-dim. Set to `hash-fallback` for
+    # semantic-blind hermetic tests.
+    embedding_model: BAAI/bge-small-en-v1.5
   profiles:
     default:
       personal_top_k: 5

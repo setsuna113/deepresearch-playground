@@ -43,6 +43,10 @@ dependencies = [
   # vendored open_deep_research at 0dd30bd.
   "langchain-mcp-adapters>=0.1.6,<0.2",
   "mcp>=1.0,<2",
+  # CPU sentence-transformers for working-memory embeddings. Avoids
+  # standing up a separate embedding endpoint just for Phase 1. The
+  # default model is `BAAI/bge-small-en-v1.5` (~140 MB, 384-dim).
+  "sentence-transformers>=3.0,<6",
 ]
 
 [project.optional-dependencies]
