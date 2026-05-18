@@ -192,8 +192,10 @@ async def studio_bootstrap(state: AgentState, config: RunnableConfig) -> dict[st
         deps.repos.runs.create(run)
         deps.repos.runs.mark_running(run.id)
         run.started_at = datetime.now(UTC)
-    except Exception as e:  # pragma: no cover - studio resilience
-        log.warning("studio_run_persist_failed", error=repr(e))
+    except Exception:
+        # Persist failure is visible in logs (full traceback) — thesis
+        # runs depend on the SQLite trace, so loudness matters here.
+        log.exception("studio_run_persist_failed")
 
     # Build the trace machinery up-front so RouterChatModel calls (and
     # the bootstrap step itself) all land on a single seq sequence.
@@ -209,12 +211,14 @@ async def studio_bootstrap(state: AgentState, config: RunnableConfig) -> dict[st
     mem_profile = _resolve_memory_profile(deps, req.memory_profile)
     prime_msgs: list[SystemMessage] = []
     primes: dict[Any, list[Any]] = {}
+    prime_error: str | None = None
     try:
         prime_msgs, primes = await prime_brief_messages(
             deps=deps, request=req, run_id=run.id, profile=mem_profile
         )
-    except Exception as e:  # pragma: no cover - studio resilience
-        log.warning("studio_prime_failed", error=repr(e))
+    except Exception as e:
+        log.exception("studio_prime_failed")
+        prime_error = type(e).__name__
 
     set_studio_active_run(
         _ActiveRun(deps=deps, request=req, run_id=run.id)
@@ -246,26 +250,34 @@ async def studio_bootstrap(state: AgentState, config: RunnableConfig) -> dict[st
 
     # Record a bootstrap step so the SQLite trace has a clear "studio
     # run started" marker even if downstream chain callbacks don't fire.
+    # If priming failed, emit the step with status=error and the exception
+    # class name in output so thesis traces never silently miss a failed
+    # prime read.
     try:
         deps.recorder.record_step(
             AgentStep(
                 run_id=run.id,
                 seq=seq_alloc.next(),
                 role=AgentRole.planner,
-                status=StepStatus.ok,
+                status=StepStatus.error if prime_error else StepStatus.ok,
                 input={"node": "studio_bootstrap", "query": query},
                 output={
                     "n_primes": sum(len(v) for v in primes.values()),
                     "model_profile": req.model_profile,
                     "memory_profile": req.memory_profile,
+                    **({"prime_error": prime_error} if prime_error else {}),
                 },
                 started_at=run.started_at or datetime.now(UTC),
                 finished_at=datetime.now(UTC),
                 latency_ms=0,
+                error=prime_error,
             )
         )
-    except Exception as e:  # pragma: no cover - never crash studio
-        log.warning("studio_bootstrap_trace_failed", error=repr(e))
+    except Exception:
+        # The recorder itself failed — can't emit a step about a step. Log
+        # loudly so the silent-failure surface is at least visible in the
+        # process logs.
+        log.exception("studio_bootstrap_trace_failed")
 
     # Studio's add_messages reducer appends rather than prepends, so we
     # can't cleanly inject the prime SystemMessages at position 0 from
@@ -310,12 +322,14 @@ async def reflector_writer_node(
     )
     final_report = (state.get("final_report") or "").strip()
 
+    write_errors: list[str] = []
     try:
         n_writes = await write_reflection(
             deps=deps, run_id=run_id, request=req, reflection=reflection
         )
-    except Exception as e:  # pragma: no cover - studio resilience
-        log.warning("studio_write_reflection_failed", error=repr(e))
+    except Exception as e:
+        log.exception("studio_write_reflection_failed")
+        write_errors.append(f"reflection:{type(e).__name__}")
         n_writes = 0
 
     if final_report:
@@ -324,8 +338,9 @@ async def reflector_writer_node(
                 deps=deps, run_id=run_id, request=req, report=final_report
             )
             n_writes += 1
-        except Exception as e:  # pragma: no cover - studio resilience
-            log.warning("studio_write_report_failed", error=repr(e))
+        except Exception as e:
+            log.exception("studio_write_report_failed")
+            write_errors.append(f"report:{type(e).__name__}")
 
     # Final marker step + finalize the run row so studio sessions appear
     # in `data/runs.db` as `done` rather than stuck `running`.
@@ -339,15 +354,17 @@ async def reflector_writer_node(
                     run_id=run_id,
                     seq=seq_alloc.next(),
                     role=AgentRole.reflector,
-                    status=StepStatus.ok,
+                    status=StepStatus.error if write_errors else StepStatus.ok,
                     input={"node": "reflector_writer"},
                     output={
                         "n_writes": n_writes,
                         "report_chars": len(final_report),
+                        **({"write_errors": write_errors} if write_errors else {}),
                     },
                     started_at=datetime.now(UTC),
                     finished_at=datetime.now(UTC),
                     latency_ms=0,
+                    error=";".join(write_errors) if write_errors else None,
                 )
             )
         # Mark the run done. ResearchRun.report_md is set so future
@@ -368,16 +385,16 @@ async def reflector_writer_node(
                 ),
             )
             deps.repos.runs.mark_done(done_run)
-        except Exception as e:  # pragma: no cover
-            log.warning("studio_run_mark_done_failed", error=repr(e))
-    except Exception as e:  # pragma: no cover - never crash studio
-        log.warning("studio_finalize_trace_failed", error=repr(e))
+        except Exception:
+            log.exception("studio_run_mark_done_failed")
+    except Exception:
+        log.exception("studio_finalize_trace_failed")
 
     return result
 
 
 def _build_studio_graph() -> Any:
-    g = StateGraph(AgentState, input=AgentInputState, config_schema=Configuration)
+    g = StateGraph(AgentState, input_schema=AgentInputState, context_schema=Configuration)
     g.add_node("studio_bootstrap", studio_bootstrap)
     g.add_node("clarify_with_user", clarify_with_user)
     g.add_node("write_research_brief", write_research_brief)
