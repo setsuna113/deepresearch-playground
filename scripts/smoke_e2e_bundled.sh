@@ -50,13 +50,15 @@ else
   echo "==> 4/6 SKIPPED — live vLLM+Qdrant gate (set LIVE_E2E=1 to run)"
 fi
 
-if [[ "${REME_E2E:-0}" == "1" ]]; then
-  echo "==> 5/6 ReMe roundtrip (REME_E2E=1, requires embedding endpoint)"
-  # The test_reme_roundtrip.py would go here once the embedding
-  # endpoint open question is resolved. For now we fall through.
+if [[ "${LIVE_REME:-${REME_E2E:-0}}" == "1" ]]; then
+  echo "==> 5/6 ReMe roundtrip (LIVE_REME=1)"
+  # Mocked unit tests first (catches structural regressions).
   uv run --extra dev pytest tests/test_reme_adapter.py -v
+  # Then the live roundtrip — talks to a real LLM + embedding endpoint.
+  # Skips internally if creds/endpoint envs aren't set.
+  LIVE_REME=1 uv run --extra dev pytest tests/test_reme_live.py -v
 else
-  echo "==> 5/6 SKIPPED — ReMe roundtrip (set REME_E2E=1 to run)"
+  echo "==> 5/6 SKIPPED — ReMe roundtrip (set LIVE_REME=1 to run)"
 fi
 
 echo "==> 6/6 Bundled smoke passed."
